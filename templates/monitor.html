@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Monitor · Airflow DAG Studio{% endblock %}
+{% block page_title %}Monitor{% endblock %}
+{% block page_subtitle %}Salud del servicio y métricas clave{% endblock %}
+{% block header_actions %}
+  <a class="button ghost" href="/monitor/reload">Refrescar</a>
+{% endblock %}
+
+{% block content %}
+<div class="grid">
+  <div class="span-4">
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Airflow Health</div>
+      <pre>{{ health_json or "—" }}</pre>
+    </div>
+  </div>
+  <div class="span-8">
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Resumen</div>
+      <div class="muted">Muestra aquí métricas (scheduler, workers, etc).</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

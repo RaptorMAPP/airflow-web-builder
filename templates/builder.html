@@ -1,0 +1,409 @@
+{% extends "base.html" %}
+{% block title %}Builder · Airflow DAG Studio{% endblock %}
+{% block page_title %}Creador de DAGs{% endblock %}
+{% block page_subtitle %}Genera DAGs compatibles con Airflow 3.1{% endblock %}
+{% block header_actions %}
+  <button class="button secondary" id="btn_preview">Previsualizar</button>
+  <button class="button" id="btn_download">Descargar .py</button>
+{% endblock %}
+
+{% block content %}
+<div class="card" style="padding:0;">
+  <!-- Tabs header -->
+  <div role="tablist" aria-label="Secciones" class="tabs"
+       style="display:flex; gap:4px; padding:8px; border-bottom:1px solid var(--border); background:var(--panel); position:sticky; top:72px; z-index:5;">
+    <button role="tab" class="tab" data-tab="general"    aria-selected="true">General</button>
+    <button role="tab" class="tab" data-tab="schedule">Scheduling</button>
+    <button role="tab" class="tab" data-tab="tasks">Tasks</button>
+    <button role="tab" class="tab" data-tab="deps">Dependencies</button>
+  </div>
+
+  <!-- Tabs content -->
+  <div class="tabpanes" style="padding:12px;">
+    <!-- GENERAL -->
+    <section id="pane-general" role="tabpanel">
+      <div class="grid">
+        <div class="span-6 card">
+          <h3 style="margin-top:0;">Datos generales</h3>
+          <label>DAG ID</label>
+          <input id="dag_id" placeholder="etl_sales_daily"/>
+          <label>Descripción</label>
+          <input id="description" placeholder="Breve descripción del DAG"/>
+          <div style="display:flex;gap:.5rem;">
+            <div style="flex:1;">
+              <label>Owner</label>
+              <input id="owner" value="data-team"/>
+            </div>
+            <div style="flex:1;">
+              <label>Aplicación</label>
+              <input id="app" placeholder="(opcional)"/>
+            </div>
+            <div style="flex:1;">
+              <label>Sub-aplicación</label>
+              <input id="subapp" placeholder="(opcional)"/>
+            </div>
+          </div>
+          <div style="display:flex;gap:.5rem;">
+            <div style="flex:1;">
+              <label>Retries</label>
+              <input id="retries" type="number" min="0" step="1" value="1"/>
+            </div>
+            <div style="flex:1;">
+              <label>Retry delay (min)</label>
+              <input id="retry_minutes" type="number" min="1" step="1" value="5"/>
+            </div>
+          </div>
+          <div style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;">
+            <input id="catchup" type="checkbox"/><label for="catchup">catchup</label>
+          </div>
+          <label>Tags (coma)</label>
+          <input id="tags" placeholder="etl, sales"/>
+        </div>
+
+        <div class="span-6 card">
+          <h3 style="margin-top:0;">Preview / Validación</h3>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <button class="button secondary" id="btn_show_code">Código</button>
+            <button class="button secondary" id="btn_show_val">Validación</button>
+          </div>
+          <pre id="out_code">—</pre>
+          <pre id="out_val" style="display:none">—</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCHEDULING -->
+    <section id="pane-schedule" role="tabpanel" hidden>
+      <div class="grid">
+        <div class="span-6 card">
+          <h3 style="margin-top:0;">Tiempo</h3>
+          <div style="display:flex;gap:.5rem;">
+            <div style="flex:1;">
+              <label>Start date</label>
+              <input id="start_date" type="date"/>
+            </div>
+            <div style="flex:1;">
+              <label>Schedule (cron o preset)</label>
+              <!-- el select de presets se inyecta aquí y rellena este input -->
+              <input id="schedule" placeholder="@daily"/>
+            </div>
+          </div>
+          <p class="muted" style="margin-top:.5rem;">Usa un preset (@hourly, @daily, …) o especifica cron libre.</p>
+        </div>
+        <div class="span-6 card">
+          <h3 style="margin-top:0;">Notas</h3>
+          <p class="muted">Airflow 3.1 utiliza <code>schedule=</code> (no <code>schedule_interval</code>).</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TASKS -->
+    <section id="pane-tasks" role="tabpanel" hidden>
+      <div class="card" style="margin-bottom:12px;">
+        <div id="task-toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <select id="opsel" style="width:auto;"></select>
+          <button id="add_op" class="button">+ Agregar tarea</button>
+          <span class="muted">o usa accesos rápidos:</span>
+          <button id="add_empty"  class="button ghost">+ Empty</button>
+          <button id="add_bash"   class="button ghost">+ Bash</button>
+          <button id="add_python" class="button ghost">+ Python</button>
+        </div>
+      </div>
+      <div id="tasks" class="grid"></div>
+    </section>
+
+    <!-- DEPENDENCIES -->
+    <section id="pane-deps" role="tabpanel" hidden>
+      <div class="grid">
+        <div class="span-6 card">
+          <h3 style="margin-top:0;">Internas (mismo DAG)</h3>
+          <div id="deps"></div>
+          <button id="add_dep" class="button">+ Dependencia interna</button>
+        </div>
+        <div class="span-6 card">
+          <h3 style="margin-top:0;">Externas (otro DAG/tarea)</h3>
+          <div id="extdeps"></div>
+          <button id="add_extdep" class="button">+ Dependencia externa</button>
+          <p class="muted" style="margin-top:.5rem;">
+            Crea un <code>ExternalTaskSensor</code> y lo encadena con una tarea local.
+          </p>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block footer_sticky %}
+<div class="footer-sticky">
+  <div>Estado: <span id="statusChip" class="tag">sin validar</span></div>
+  <div style="display:flex;gap:8px;">
+    <button class="button secondary" id="btn_preview_footer">Previsualizar</button>
+    <button class="button" id="btn_download_footer">Descargar .py</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ====== Tabs accesibles ====== */
+(function tabs(){
+  const KEY='builder:lastTab';
+  const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+  const panes = {
+    general:  document.getElementById('pane-general'),
+    schedule: document.getElementById('pane-schedule'),
+    tasks:    document.getElementById('pane-tasks'),
+    deps:     document.getElementById('pane-deps')
+  };
+  function show(name){
+    tabs.forEach(t=>t.setAttribute('aria-selected', String(t.dataset.tab===name)));
+    Object.entries(panes).forEach(([k,el])=> el.hidden = (k!==name));
+    localStorage.setItem(KEY, name);
+  }
+  tabs.forEach(t => t.addEventListener('click', ()=>show(t.dataset.tab)));
+  const saved = localStorage.getItem(KEY) || 'general';
+  show(saved);
+})();
+
+/* ====== Tokens de UI preexistentes ====== */
+const OP_TYPES = [
+  ["python","PythonOperator"], ["bash","BashOperator"],
+  ["dummy","DummyOperator"], ["empty","EmptyOperator"],
+  ["sqlite","SqliteOperator"], ["postgres","PostgresOperator"], ["mysql","MySqlOperator"],
+  ["email","EmailOperator"], ["http","SimpleHttpOperator"], ["docker","DockerOperator"],
+  ["mssql","MsSqlOperator"], ["oracle","OracleOperator"], ["snowflake","SnowflakeOperator"],
+  ["s3","S3CreateObjectOperator"], ["lambda","LambdaInvokeFunctionOperator"], ["glue","GlueJobOperator"],
+  ["bigquery","BigQueryExecuteQueryOperator"], ["dataflow","DataflowCreateJavaJobOperator"],
+  ["azure","AzureDataFactoryRunPipelineOperator"], ["kubernetes","KubernetesPodOperator"],
+  ["spark","SparkSubmitOperator"], ["databricks","DatabricksSubmitRunOperator"]
+];
+const SCHEDULES = ["@once","@hourly","@daily","@weekly","@monthly","@yearly","*/5 * * * *","0 * * * *","0 3 * * *","0 0 * * 1","0 0 1 * *"];
+function el(tag, attrs={}, html=""){ const e=document.createElement(tag); Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v)); if(html) e.innerHTML=html; return e; }
+let tcount = 0;
+function normId(v){ let s=String(v||"").trim().replace(/\s+/g,"_"); s=s.replace(/[^A-Za-z0-9_]/g,"_"); if(!/^[A-Za-z_]/.test(s)) s="t_"+s; return s||"t_task"; }
+function ensureUniqueTaskIds(tasks){ const seen=new Map(); return tasks.map(t=>{ const base=normId(t.task_id); let id=base; if(seen.has(base)){ const n=seen.get(base)+1; seen.set(base,n); id=`${base}_${n}` } else { seen.set(base,1) } return {...t, task_id:id}; }); }
+
+/* ====== TASKS UI ====== */
+function taskIdOptions(){
+  return Array.from(document.querySelectorAll('#tasks input[data-k="task_id"]'))
+    .map(i=>normId(i.value)).filter(Boolean)
+    .filter((v,i,a)=>a.indexOf(v)===i);
+}
+function refreshTaskSelects(){
+  const ids = taskIdOptions();
+  document.querySelectorAll('#deps select[data-k="_sel"]').forEach(sel=>{
+    const v=sel.value; sel.innerHTML=""; ids.forEach(id=>sel.appendChild(el("option",{value:id},id))); if(ids.includes(v)) sel.value=v;
+  });
+  document.querySelectorAll('#extdeps select[data-k="downstream"]').forEach(sel=>{
+    const v=sel.value; sel.innerHTML=""; ids.forEach(id=>sel.appendChild(el("option",{value:id},id))); if(ids.includes(v)) sel.value=v;
+  });
+}
+function addTask(type){
+  const wrap = el("div",{class:"card", style:"grid-column: span 6;"});
+  const tid = `t${++tcount}`;
+  wrap.appendChild(el("div",{},`<b>${type}</b>`));
+  wrap.appendChild(el("label",{},"task_id"));
+  const idInput = el("input",{value:tid,"data-k":"task_id"});
+  idInput.addEventListener('change', refreshTaskSelects);
+  wrap.appendChild(idInput);
+  wrap.appendChild(el("input",{"type":"hidden","data-k":"type",value:type}));
+
+  const add = (label, key, ph="", long=false) => {
+    wrap.appendChild(el("label",{},label));
+    if(long){ wrap.appendChild(el("textarea",{"data-k":key,style:"height:88px;"}, ph)); }
+    else { wrap.appendChild(el("input",{"data-k":key,placeholder:ph})); }
+  };
+
+  if(type==="BashOperator"){ add("bash_command","bash_command","echo 'hola'"); }
+  if(type==="PythonOperator"){ add("python_callable_name","python_callable_name","my_callable"); add("python_callable_body","python_callable_body","print('Hello')",true); }
+  if(type==="SqliteOperator"){ add("sqlite_conn_id","sqlite_conn_id","sqlite_default"); add("sql","sql","SELECT 1;"); }
+  if(type==="PostgresOperator"){ add("postgres_conn_id","postgres_conn_id","postgres_default"); add("sql","sql","SELECT 1;"); }
+  if(type==="MySqlOperator"){ add("mysql_conn_id","mysql_conn_id","mysql_default"); add("sql","sql","SELECT 1;"); }
+  if(type==="MsSqlOperator"){ add("mssql_conn_id","mssql_conn_id","mssql_default"); add("sql","sql","SELECT 1;"); }
+  if(type==="OracleOperator"){ add("oracle_conn_id","oracle_conn_id","oracle_default"); add("sql","sql","SELECT 1 FROM dual"); }
+  if(type==="SnowflakeOperator"){ add("snowflake_conn_id","snowflake_conn_id","snowflake_default"); add("sql","sql","SELECT 1;"); }
+  if(type==="S3CreateObjectOperator"){ add("aws_conn_id","aws_conn_id","aws_default"); add("s3_bucket","s3_bucket","my-bucket"); add("s3_key","s3_key","path/file.txt"); add("data","data","hello world"); }
+  if(type==="LambdaInvokeFunctionOperator"){ add("aws_conn_id","aws_conn_id","aws_default"); add("function_name","function_name","my-fn"); add("payload","payload",'{"key":"value"}'); }
+  if(type==="GlueJobOperator"){ add("aws_conn_id","aws_conn_id","aws_default"); add("job_name","job_name","my-job"); add("script_location","script_location","s3://bucket/script.py"); add("iam_role_name","iam_role_name","glue-role"); add("num_of_dpus","num_of_dpus","10"); }
+  if(type==="BigQueryExecuteQueryOperator"){ add("gcp_conn_id","gcp_conn_id","google_cloud_default"); add("sql","sql","SELECT 1;"); add("use_legacy_sql","use_legacy_sql","false"); }
+  if(type==="DataflowCreateJavaJobOperator"){ add("gcp_conn_id","gcp_conn_id","google_cloud_default"); add("jar","jar","/path/app.jar"); add("job_name","job_name","dataflow-job"); add("options","options",'{"key":"value"}'); }
+  if(type==="AzureDataFactoryRunPipelineOperator"){ add("azure_data_factory_conn_id","azure_data_factory_conn_id","azure_data_factory_default"); add("pipeline_name","pipeline_name","pipeline1"); add("parameters","parameters",'{"p":1}'); }
+  if(type==="DockerOperator"){ add("image","image","python:3.11"); add("api_version","api_version","auto"); add("command","command","echo hello"); add("docker_url","docker_url","unix://var/run/docker.sock"); add("auto_remove","auto_remove","true"); }
+  if(type==="KubernetesPodOperator"){ add("name","name","pod-task"); add("namespace","namespace","default"); add("image","image","python:3.11"); add("cmds","cmds",'["python","-c"]'); add("arguments","arguments",'["print(\\"hi\\")"]'); }
+  if(type==="SparkSubmitOperator"){ add("application","application","/path/app.py"); add("conn_id","conn_id","spark_default"); add("application_args","application_args",'["--flag","value"]'); }
+  if(type==="DatabricksSubmitRunOperator"){ add("databricks_conn_id","databricks_conn_id","databricks_default"); add("json","json",'{"run_name":"demo","new_cluster":{...}}',true); }
+  if(type==="SimpleHttpOperator"){ add("http_conn_id","http_conn_id","http_default"); add("endpoint","endpoint","/"); add("method","method","GET"); add("data","data",""); add("headers","headers",'{"Content-Type":"application/json"}'); }
+  if(type==="EmailOperator"){ add("to","to","example@example.com"); add("subject","subject","Airflow Notification"); add("html_content","html_content","Job done."); }
+
+  const del = el("button",{},"Eliminar");
+  del.onclick = () => { wrap.remove(); refreshTaskSelects(); };
+  wrap.appendChild(el("div",{style:"margin-top:6px;"})).appendChild(del);
+
+  document.getElementById("tasks").appendChild(wrap);
+  refreshTaskSelects();
+}
+
+/* ====== Dependencias ====== */
+function makeTaskSelect(selected){
+  const sel = el("select", {"data-k":"_sel"});
+  taskIdOptions().forEach(id => {
+    const opt = el("option",{value:id}, id);
+    if(id === selected) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  return sel;
+}
+function addDep(){
+  const wrap = el("div",{class:"card"});
+  wrap.appendChild(el("label",{},"upstream"));
+  wrap.appendChild(makeTaskSelect());
+  wrap.appendChild(el("label",{},"downstream"));
+  wrap.appendChild(makeTaskSelect());
+  const del = el("button",{},"Eliminar");
+  del.onclick = () => wrap.remove();
+  wrap.appendChild(el("div",{style:"margin-top:6px;"})).appendChild(del);
+  document.getElementById("deps").appendChild(wrap);
+}
+function makeDownstreamSelect(selected){
+  const sel = el("select", {"data-k":"downstream", style:"width:100%;"});
+  taskIdOptions().forEach(id => sel.appendChild(el("option",{value:id}, id)));
+  if(selected) sel.value = selected;
+  return sel;
+}
+function addExternalDep(){
+  const wrap = el("div",{class:"card"});
+  wrap.appendChild(el("label",{},"external_dag_id"));
+  wrap.appendChild(el("input",{"data-k":"external_dag_id",placeholder:"otro_dag_id"}));
+  wrap.appendChild(el("label",{},"external_task_id (opcional)"));
+  wrap.appendChild(el("input",{"data-k":"external_task_id",placeholder:"(vacío => espera al DAG)"}));
+  wrap.appendChild(el("label",{},"mode (poke/reschedule)"));
+  wrap.appendChild(el("input",{"data-k":"mode",value:"reschedule"}));
+  wrap.appendChild(el("label",{},"poke_interval (s)"));
+  wrap.appendChild(el("input",{"data-k":"poke_interval",type:"number",value:"60"}));
+  wrap.appendChild(el("label",{},"timeout (s)"));
+  wrap.appendChild(el("input",{"data-k":"timeout",type:"number",value:"3600"}));
+  wrap.appendChild(el("label",{},"Conectar a (downstream local)"));
+  wrap.appendChild(makeDownstreamSelect());
+  const del = el("button",{},"Eliminar");
+  del.onclick = () => wrap.remove();
+  wrap.appendChild(el("div",{style:"margin-top:6px;"})).appendChild(del);
+  document.getElementById("extdeps").appendChild(wrap);
+}
+
+/* ====== Schedule select que rellena #schedule ====== */
+(function initSchedule(){
+  const sch = document.getElementById("schedule");
+  if(!sch) return;
+  const wrapper = sch.parentElement;
+  const sel = el("select",{id:"schedule_sel",style:"width:100%;"});
+  SCHEDULES.forEach(s => sel.appendChild(el("option",{value:s}, s)));
+  sel.appendChild(el("option",{value:"custom"},"custom (cron libre)"));
+  if(!sch.value) sch.value = sel.options[0].value;
+  sel.onchange = () => { if(sel.value!=="custom") sch.value = sel.value; sch.focus(); };
+  wrapper.insertBefore(sel, sch);
+})();
+
+/* ====== Toolbar (selector operador + quick buttons) ====== */
+(function initOps(){
+  const sel = document.getElementById("opsel");
+  if(sel){ OP_TYPES.forEach(([k,v])=> sel.appendChild(el("option",{value:v}, `${k} — ${v}`))); }
+  document.getElementById("add_op")?.addEventListener('click', ()=> addTask(sel.value));
+  document.getElementById("add_empty") ?.addEventListener('click', ()=> addTask("EmptyOperator"));
+  document.getElementById("add_bash")  ?.addEventListener('click', ()=> addTask("BashOperator"));
+  document.getElementById("add_python")?.addEventListener('click', ()=> addTask("PythonOperator"));
+  document.getElementById("add_dep")   ?.addEventListener('click', addDep);
+  document.getElementById("add_extdep")?.addEventListener('click', addExternalDep);
+})();
+
+/* ====== Collect + Preview/Download (reusan tu API) ====== */
+function qAll(root, sel){ return Array.from((root||document).querySelectorAll(sel)); }
+function collect(){
+  const taskCards = qAll(document, "#tasks > .card");
+  let tasks = taskCards.map(card => {
+    const o = {};
+    qAll(card, "[data-k]").forEach(inp => {
+      const k = inp.getAttribute("data-k");
+      o[k] = (k === "task_id") ? normId(inp.value) : inp.value;
+    });
+    return o;
+  });
+  tasks = ensureUniqueTaskIds(tasks);
+
+  const deps = qAll(document, "#deps > .card").map(card => {
+    const [upSel, downSel] = qAll(card, 'select[data-k="_sel"]');
+    return { upstream: upSel?.value || "", downstream: downSel?.value || "" };
+  });
+
+  const extDeps = qAll(document, "#extdeps > .card").map(card => {
+    const ext = {}; qAll(card, "[data-k]").forEach(inp => ext[inp.getAttribute("data-k")] = inp.value); return ext;
+  });
+  extDeps.forEach((e, idx) => {
+    const ets_id = normId(`wait_${e.external_dag_id}_${e.external_task_id || "dag"}`) + (idx ? `_${idx+1}` : "");
+    tasks.push({
+      type: "ExternalTaskSensor", task_id: ets_id, external_dag_id: e.external_dag_id,
+      external_task_id: e.external_task_id || null, mode: e.mode || "reschedule",
+      poke_interval: e.poke_interval || 60, timeout: e.timeout || 3600
+    });
+    if(e.downstream){ deps.push({ upstream: ets_id, downstream: e.downstream }); }
+  });
+
+  return {
+    dag_id: document.getElementById("dag_id")?.value || "",
+    description: document.getElementById("description")?.value || "",
+    owner: document.getElementById("owner")?.value || "owner",
+    app: document.getElementById("app")?.value || "",
+    subapp: document.getElementById("subapp")?.value || "",
+    retries: parseInt(document.getElementById("retries")?.value || "1", 10),
+    retry_minutes: parseInt(document.getElementById("retry_minutes")?.value || "5", 10),
+    start_date: document.getElementById("start_date")?.value || "",
+    schedule: document.getElementById("schedule")?.value || "@daily",
+    catchup: !!document.getElementById("catchup")?.checked,
+    tags: (document.getElementById("tags")?.value || "").split(",").map(s => s.trim()).filter(Boolean),
+    tasks, dependencies: deps
+  };
+}
+
+async function doPreview(){
+  const spec = collect();
+  const r = await fetch("/api/builder/preview", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(spec)});
+  const data = await r.json();
+  document.getElementById("out_code").textContent = data.code || "";
+  document.getElementById("out_val").textContent  = JSON.stringify(data.validation || {}, null, 2);
+  document.getElementById("statusChip").textContent = (data.validation?.valid ? "válido" : "con errores");
+}
+
+document.getElementById("btn_preview")?.addEventListener("click", doPreview);
+document.getElementById("btn_preview_footer")?.addEventListener("click", doPreview);
+
+document.getElementById("btn_download")?.addEventListener("click", async ()=>{
+  const spec = collect();
+  const r = await fetch("/api/builder/download", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(spec)});
+  const blob = await r.blob();
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = (spec.dag_id || "dag_generated") + ".py"; a.click();
+});
+document.getElementById("btn_download_footer")?.addEventListener("click", async ()=>{
+  document.getElementById("btn_download")?.click();
+});
+
+/* Switch entre Código y Validación */
+document.getElementById("btn_show_code")?.addEventListener("click", ()=>{
+  document.getElementById("out_code").style.display="block";
+  document.getElementById("out_val").style.display="none";
+});
+document.getElementById("btn_show_val")?.addEventListener("click", ()=>{
+  document.getElementById("out_code").style.display="none";
+  document.getElementById("out_val").style.display="block";
+});
+
+/* Fecha por defecto = hoy */
+(function setDefaultDate(){
+  const d = document.getElementById("start_date");
+  if(!d?.value){
+    const now = new Date(); const y=now.getFullYear(), m=String(now.getMonth()+1).padStart(2,"0"), dd=String(now.getDate()).padStart(2,"0");
+    d.value = `${y}-${m}-${dd}`;
+  }
+})();
+</script>
+{% endblock %}

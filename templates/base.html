@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Airflow DagCraft{% endblock %}</title>
+
+  <style>
+    :root {
+      --brand: #017CEE;
+      --brand-600: #116DDC;
+      --brand-700: #0C56AD;
+
+      --bg:#f7f9fc; --panel:#ffffff; --panel-alt:#f2f5fb;
+      --text:#0b0e14; --muted:#667085; --border:#e4e7ec; --code:#f6f8fa;
+
+      --success: #12b76a; --warning:#f79009; --danger:#f04438;
+      --radius: 12px;
+    }
+    :root[data-theme="dark"]{
+      --bg:#0b1220; --panel:#121a2b; --panel-alt:#0f1627;
+      --text:#e6eaf2; --muted:#9aa4b2; --border:#1f2a44; --code:#0f172a;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body{ margin:0; background:var(--bg); color:var(--text);
+          font:14px/1.5 system-ui,Segoe UI,Roboto,Inter,sans-serif; }
+
+    /* Layout */
+    .topbar{ display:flex; align-items:center; justify-content:space-between;
+             gap:12px; padding:10px 16px; background:var(--panel);
+             border-bottom:1px solid var(--border); position:sticky; top:0; z-index:20; }
+    .brand{ display:flex; align-items:center; gap:8px; font-weight:700; }
+    .tag{ background:var(--panel-alt); border:1px solid var(--border);
+          padding:2px 8px; border-radius:999px; font-size:12px; }
+
+    .shell{ display:flex; gap:16px; padding:16px; min-height:calc(100dvh - 56px); }
+    .sidebar{ width:220px; background:var(--panel); border:1px solid var(--border);
+              border-radius:var(--radius); padding:12px; height:fit-content;
+              position:sticky; top:72px; }
+    .nav{ display:grid; gap:6px; }
+    .nav a{ text-decoration:none; display:flex; align-items:center; gap:8px;
+            padding:8px 10px; border-radius:10px; color:var(--text);
+            border:1px solid var(--border); background:var(--panel-alt); }
+    .nav a.active{ border-color:var(--brand); outline:2px solid rgba(1,124,238,.15); }
+    .nav a:hover{ border-color:var(--brand-600); }
+
+    .main{ flex:1; display:flex; flex-direction:column; gap:16px; }
+
+    /* Primitives */
+    .card{ background:var(--panel); border:1px solid var(--border);
+           border-radius:var(--radius); padding:16px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+    .muted{ color:var(--muted); font-size:12px; }
+    .button{ background:var(--brand); color:#fff; border:none; border-radius:10px;
+             padding:8px 12px; font-weight:600; cursor:pointer; }
+    .button.secondary{ background:transparent; color:var(--brand); border:1px solid var(--brand); }
+    .button.ghost{ background:transparent; color:var(--text); border:1px solid var(--border); }
+    input, select, textarea{ width:100%; background:var(--panel-alt); color:var(--text);
+      border:1px solid var(--border); border-radius:10px; padding:8px; }
+    label{ font-size:12px; color:var(--muted); display:block; margin:.25rem 0 .35rem; }
+
+    .grid{ display:grid; grid-template-columns: repeat(12, 1fr); gap:16px; }
+    .grid > .span-4{ grid-column: span 4; }
+    .grid > .span-8{ grid-column: span 8; }
+    @media (max-width: 960px){
+      .shell{ flex-direction:column; }
+      .sidebar{ position:static; width:100%; }
+      .grid{ grid-template-columns:1fr; }
+      .grid > .span-4, .grid > .span-8{ grid-column: 1 / -1; }
+    }
+
+    pre{ background:var(--code); border:1px solid var(--border);
+         border-radius:10px; padding:12px; overflow:auto; }
+
+    /* Footer sticky opcional por página */
+    .footer-sticky{ position:sticky; bottom:0; background:var(--panel);
+      border:1px solid var(--border); border-radius:var(--radius);
+      padding:10px 16px; display:flex; justify-content:space-between; align-items:center; }
+  </style>
+
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="brand">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2l3 7h7l-5.5 4 2.5 7L12 17l-7 3 2.5-7L2 9h7l3-7z" fill="currentColor" opacity=".15"/></svg>
+      Airflow DagCraft
+      <span class="tag">beta</span>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <input id="globalSearch" placeholder="Buscar (Ctrl/Cmd + K)" style="min-width:260px;">
+      <select id="lang" style="width:auto;">
+        <option value="es">ES</option>
+        <option value="en">EN</option>
+      </select>
+      <button id="themeToggle" class="button secondary" title="Cambiar tema">🌓</button>
+    </div>
+  </div>
+
+  <!-- Shell -->
+  <div class="shell">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <nav class="nav">
+        {% set p = request.path %}
+        <a href="/" class="{{ 'active' if p == '/' else '' }}">🏠 Dashboard</a>
+        <a href="/builder" class="{{ 'active' if p.startswith('/builder') else '' }}">🧩 Builder</a>
+        <a href="/validate" class="{{ 'active' if p.startswith('/validate') else '' }}">✅ Validación</a>
+        <a href="/monitor" class="{{ 'active' if p.startswith('/monitor') else '' }}">📈 Monitor</a>
+        <a href="/settings" class="{{ 'active' if p.startswith('/settings') else '' }}">⚙️ Ajustes</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      {% block header %}
+      <!-- Cabecera por defecto (puedes sobrescribirla) -->
+      <div class="card" style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-weight:700">{% block page_title %}Página{% endblock %}</div>
+          <div class="muted">{% block page_subtitle %}{% endblock %}</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          {% block header_actions %}{% endblock %}
+        </div>
+      </div>
+      {% endblock %}
+
+      {% block content %}{% endblock %}
+
+      {% block footer_sticky %}{% endblock %}
+    </main>
+  </div>
+
+  <script>
+    // Tema claro/oscuro con persistencia
+    (function(){
+      const KEY="ui-theme";
+      const root=document.documentElement;
+      const saved=localStorage.getItem(KEY);
+      const prefers=window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark":"light";
+      root.setAttribute("data-theme", saved || prefers);
+      document.getElementById("themeToggle")?.addEventListener("click", ()=>{
+        const next = root.getAttribute("data-theme")==="dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        localStorage.setItem(KEY, next);
+      });
+      // atajo de búsqueda (solo UI)
+      const input = document.getElementById("globalSearch");
+      window.addEventListener("keydown", (e)=>{
+        if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==='k'){
+          e.preventDefault(); input?.focus();
+        }
+      });
+    })();
+  </script>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h3>Validar DAG (pega tu código)</h3>
+    <textarea id="code" style="width:100%;height:260px;font-family:ui-monospace,Consolas,Menlo,monospace;"></textarea>
+    <div style="margin-top:10px;display:flex;gap:8px;">
+      <button id="btnExample">Ejemplo DAG 3.1</button>
+      <button id="btnValidate">Validar</button>
+    </div>
+    <pre id="out" style="margin-top:12px;">Resultado aquí…</pre>
+  </div>
+  <script>
+    const ex = `from datetime import datetime, timedelta
+from airflow import DAG
+from airflow.operators.empty import EmptyOperator
+
+default_args = {"owner":"data-team","retries":1,"retry_delay":timedelta(minutes=5)}
+
+with DAG(
+    dag_id="example_etl",
+    start_date=datetime(2025,1,1),
+    schedule="0 3 * * *",
+    catchup=False,
+    default_args=default_args,
+    tags=["etl"]
+) as dag:
+    a = EmptyOperator(task_id="start")
+    b = EmptyOperator(task_id="end")
+    a >> b
+`;
+    document.getElementById('btnExample').onclick = () => { document.getElementById('code').value = ex; };
+    document.getElementById('btnValidate').onclick = async () => {
+      const code = document.getElementById('code').value || "";
+      const r = await fetch('/api/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({content: code}) });
+      const data = await r.json();
+      document.getElementById('out').textContent = JSON.stringify(data, null, 2);
+    };
+  </script>
+{% endblock %}

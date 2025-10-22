@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Airflow DAG Studio{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}Resumen de actividad y accesos rápidos{% endblock %}
+
+{% block content %}
+<div class="grid">
+  <div class="span-4">
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Acciones rápidas</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <a class="button" href="/builder">Nuevo DAG</a>
+        <a class="button ghost" href="/validate">Validar DAG</a>
+        <a class="button ghost" href="/monitor">Estado Airflow</a>
+      </div>
+    </div>
+  </div>
+  <div class="span-8">
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Actualizaciones</div>
+      <div class="muted">Aquí puedes mostrar noticias, últimas validaciones, etc.</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
