@@ -7,12 +7,37 @@
   <button class="button" id="btn_download">Descargar .py</button>
 {% endblock %}
 
+{% block head_extra %}
+<style>
+  .form-grid-2 { display:grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap:12px; }
+  .form-grid-3 { display:grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap:12px; }
+  .cards-autofit { display:grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap:12px; }
+  .deps-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap:12px; }
+  .tabs-header { display:flex; gap:6px; padding:8px; border-bottom:1px solid var(--border); background:var(--panel); position:sticky; top:72px; z-index:5; }
+  .tab { border:1px solid var(--border); background:var(--panel-alt); padding:6px 10px; border-radius:8px; cursor:pointer; }
+  .tab[aria-selected="true"]{ border-color:var(--brand); color:var(--brand); }
+  .section-card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
+  .muted-note { margin-top:.35rem; color:var(--muted); font-size:12px; }
+  #pane-tasks.compact .section-card { padding:10px; border-radius:10px; }
+  #pane-tasks.compact label { font-size:11px; margin:.15rem 0 .2rem; }
+  #pane-tasks.compact input, #pane-tasks.compact select, #pane-tasks.compact textarea { padding:6px; font-size:12px; }
+  #pane-tasks.compact .cards-autofit { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:8px; }
+  .graph-card { background:var(--panel); border:1px solid var(--border);
+                border-radius:var(--radius); padding:12px; }
+  #dagGraph { width:100%; height:420px; border:1px dashed var(--border);
+              border-radius:10px; background:
+                radial-gradient(var(--border) 1px, transparent 0) 0 0/16px 16px,
+                radial-gradient(var(--border) 1px, transparent 0) 8px 8px/16px 16px;
+              margin-top:8px; }
+</style>
+<script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+{% endblock %}
+
 {% block content %}
 <div class="card" style="padding:0;">
   <!-- Tabs header -->
-  <div role="tablist" aria-label="Secciones" class="tabs"
-       style="display:flex; gap:4px; padding:8px; border-bottom:1px solid var(--border); background:var(--panel); position:sticky; top:72px; z-index:5;">
-    <button role="tab" class="tab" data-tab="general"    aria-selected="true">General</button>
+  <div role="tablist" aria-label="Secciones" class="tabs-header">
+    <button role="tab" class="tab" data-tab="general" aria-selected="true">General</button>
     <button role="tab" class="tab" data-tab="schedule">Scheduling</button>
     <button role="tab" class="tab" data-tab="tasks">Tasks</button>
     <button role="tab" class="tab" data-tab="deps">Dependencies</button>
@@ -22,115 +47,211 @@
   <div class="tabpanes" style="padding:12px;">
     <!-- GENERAL -->
     <section id="pane-general" role="tabpanel">
-      <div class="grid">
-        <div class="span-6 card">
-          <h3 style="margin-top:0;">Datos generales</h3>
-          <label>DAG ID</label>
-          <input id="dag_id" placeholder="etl_sales_daily"/>
-          <label>Descripción</label>
-          <input id="description" placeholder="Breve descripción del DAG"/>
-          <div style="display:flex;gap:.5rem;">
-            <div style="flex:1;">
-              <label>Owner</label>
-              <input id="owner" value="data-team"/>
-            </div>
-            <div style="flex:1;">
-              <label>Aplicación</label>
-              <input id="app" placeholder="(opcional)"/>
-            </div>
-            <div style="flex:1;">
-              <label>Sub-aplicación</label>
-              <input id="subapp" placeholder="(opcional)"/>
-            </div>
+      <div class="section-card">
+        <h3 style="margin-top:0;">Datos generales</h3>
+        <div class="form-grid-2">
+          <div>
+            <label>DAG ID</label>
+            <input id="dag_id" placeholder="etl_sales_daily"/>
           </div>
-          <div style="display:flex;gap:.5rem;">
-            <div style="flex:1;">
-              <label>Retries</label>
-              <input id="retries" type="number" min="0" step="1" value="1"/>
-            </div>
-            <div style="flex:1;">
-              <label>Retry delay (min)</label>
-              <input id="retry_minutes" type="number" min="1" step="1" value="5"/>
-            </div>
+          <div>
+            <label>Descripción</label>
+            <input id="description" placeholder="Breve descripción del DAG"/>
           </div>
-          <div style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;">
-            <input id="catchup" type="checkbox"/><label for="catchup">catchup</label>
-          </div>
-          <label>Tags (coma)</label>
-          <input id="tags" placeholder="etl, sales"/>
         </div>
 
-        <div class="span-6 card">
-          <h3 style="margin-top:0;">Preview / Validación</h3>
-          <div style="display:flex;gap:8px;margin-bottom:8px;">
-            <button class="button secondary" id="btn_show_code">Código</button>
-            <button class="button secondary" id="btn_show_val">Validación</button>
+        <div class="form-grid-3" style="margin-top:12px;">
+          <div>
+            <label>Owner</label>
+            <input id="owner" value="data-team"/>
           </div>
-          <pre id="out_code">—</pre>
-          <pre id="out_val" style="display:none">—</pre>
+          <div>
+            <label>Aplicación</label>
+            <input id="app" placeholder="(opcional)"/>
+          </div>
+          <div>
+            <label>Sub-aplicación</label>
+            <input id="subapp" placeholder="(opcional)"/>
+          </div>
+        </div>
+
+        <div class="form-grid-2" style="margin-top:12px;">
+          <div>
+            <label>Retries</label>
+            <input id="retries" type="number" min="0" step="1" value="1"/>
+          </div>
+          <div>
+            <label>Retry delay (min)</label>
+            <input id="retry_minutes" type="number" min="1" step="1" value="5"/>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:.5rem;align-items:center;margin-top:12px;">
+          <input id="catchup" type="checkbox"/><label for="catchup">catchup</label>
+        </div>
+
+        <div style="margin-top:12px;">
+          <label>Tags (coma)</label>
+          <input id="tags" placeholder="etl, sales"/>
         </div>
       </div>
     </section>
 
     <!-- SCHEDULING -->
     <section id="pane-schedule" role="tabpanel" hidden>
-      <div class="grid">
-        <div class="span-6 card">
-          <h3 style="margin-top:0;">Tiempo</h3>
-          <div style="display:flex;gap:.5rem;">
-            <div style="flex:1;">
-              <label>Start date</label>
-              <input id="start_date" type="date"/>
-            </div>
-            <div style="flex:1;">
-              <label>Schedule (cron o preset)</label>
-              <!-- el select de presets se inyecta aquí y rellena este input -->
-              <input id="schedule" placeholder="@daily"/>
-            </div>
+      <div class="section-card">
+        <h3 style="margin-top:0;">Scheduling</h3>
+
+        <div class="form-grid-2">
+          <div>
+            <label>Start date</label>
+            <input id="start_date" type="date"/>
           </div>
-          <p class="muted" style="margin-top:.5rem;">Usa un preset (@hourly, @daily, …) o especifica cron libre.</p>
+
+          <div>
+            <label>Schedule (presets o custom)</label>
+            <!-- ÚNICO CONTROL -->
+            <select id="schedule_main"></select>
+
+            <!-- Visible sólo si elige custom -->
+            <div id="cron_custom_wrap" style="margin-top:6px; display:none;">
+              <label>Cron (min hora día mes dow)</label>
+              <input id="custom_cron" type="text" placeholder="0 17 * * *">
+            </div>
+
+            <div class="muted-note">Usa un preset (@hourly, @daily, …) o cron libre con “custom”.</div>
+          </div>
         </div>
-        <div class="span-6 card">
-          <h3 style="margin-top:0;">Notas</h3>
-          <p class="muted">Airflow 3.1 utiliza <code>schedule=</code> (no <code>schedule_interval</code>).</p>
+
+        <p class="muted-note" style="margin-top:12px;">
+          Nota: Airflow 3.1 utiliza <code>schedule=</code> (no <code>schedule_interval</code>).
+        </p>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <div class="grid">
+          <div class="span-3">
+            <label>Modo</label>
+            <select id="sched_mode">
+              <option value="daily">Daily (a una hora)</option>
+              <option value="hourly">Hourly (dentro de ventana)</option>
+              <option value="every_n">Every N minutes (ventana)</option>
+              <option value="none">—</option>
+            </select>
+          </div>
+          <div class="span-3">
+            <label>Timezone</label>
+            <input id="sched_tz" type="text" value="America/Santiago">
+          </div>
+
+          <!-- DAILY -->
+          <div class="span-2 only-daily">
+            <label>Hora</label>
+            <input id="daily_hh" type="number" min="0" max="23" value="17">
+          </div>
+          <div class="span-2 only-daily">
+            <label>Minuto</label>
+            <input id="daily_mm" type="number" min="0" max="59" value="0">
+          </div>
+
+          <!-- HOURLY -->
+          <div class="span-2 only-hourly">
+            <label>Minuto de la hora</label>
+            <input id="hourly_mm" type="number" min="0" max="59" value="0">
+          </div>
+          <div class="span-2 only-hourly">
+            <label>Desde hora</label>
+            <input id="hourly_from" type="number" min="0" max="23" value="9">
+          </div>
+          <div class="span-2 only-hourly">
+            <label>Hasta hora</label>
+            <input id="hourly_to" type="number" min="0" max="23" value="21">
+          </div>
+
+          <!-- EVERY N -->
+          <div class="span-2 only-every_n">
+            <label>N minutos</label>
+            <input id="n_minutes" type="number" min="1" max="59" value="30">
+          </div>
+          <div class="span-2 only-every_n">
+            <label>Desde hora</label>
+            <input id="n_from" type="number" min="0" max="23" value="9">
+          </div>
+          <div class="span-2 only-every_n">
+            <label>Hasta hora</label>
+            <input id="n_to" type="number" min="0" max="23" value="21">
+          </div>
+        </div>
+
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+          <button id="btn_build_cron" class="button">Generar cron</button>
+          <code id="cron_preview" style="padding:4px 8px;border:1px solid var(--border);border-radius:8px;">—</code>
+          <button id="btn_preview_runs" class="button ghost">Ver próximos 5</button>
+          <span id="runs_preview" class="muted"></span>
         </div>
       </div>
     </section>
 
     <!-- TASKS -->
     <section id="pane-tasks" role="tabpanel" hidden>
-      <div class="card" style="margin-bottom:12px;">
+      <div class="section-card" style="margin-bottom:12px;">
         <div id="task-toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <select id="opsel" style="width:auto;"></select>
+          <select id="opsel" style="width:320px; max-width:100%;"></select>
           <button id="add_op" class="button">+ Agregar tarea</button>
-          <span class="muted">o usa accesos rápidos:</span>
+          <span class="muted">Accesos rápidos:</span>
           <button id="add_empty"  class="button ghost">+ Empty</button>
           <button id="add_bash"   class="button ghost">+ Bash</button>
           <button id="add_python" class="button ghost">+ Python</button>
+          <button id="add_custom" class="button ghost">+ Custom</button>
+          <button id="add_ssh"    class="button ghost">+ SSH</button>
+          <button id="add_winrm"  class="button ghost">+ WinRM</button>
+
+          <div style="margin-left:auto; display:flex; align-items:center; gap:6px;">
+            <label for="toggle_compact" class="muted">Modo compacto</label>
+            <input id="toggle_compact" type="checkbox" />
+          </div>
         </div>
       </div>
-      <div id="tasks" class="grid"></div>
+      <div id="tasks" class="cards-autofit"></div>
     </section>
 
     <!-- DEPENDENCIES -->
     <section id="pane-deps" role="tabpanel" hidden>
-      <div class="grid">
-        <div class="span-6 card">
+      <div class="deps-grid">
+        <div class="section-card">
           <h3 style="margin-top:0;">Internas (mismo DAG)</h3>
           <div id="deps"></div>
-          <button id="add_dep" class="button">+ Dependencia interna</button>
+          <button id="add_dep" class="button" style="margin-top:8px;">+ Dependencia interna</button>
         </div>
-        <div class="span-6 card">
+        <div class="section-card">
           <h3 style="margin-top:0;">Externas (otro DAG/tarea)</h3>
           <div id="extdeps"></div>
-          <button id="add_extdep" class="button">+ Dependencia externa</button>
-          <p class="muted" style="margin-top:.5rem;">
-            Crea un <code>ExternalTaskSensor</code> y lo encadena con una tarea local.
-          </p>
+          <button id="add_extdep" class="button" style="margin-top:8px;">+ Dependencia externa</button>
+          <p class="muted-note">Crea un <code>ExternalTaskSensor</code> y lo encadena con una tarea local.</p>
         </div>
       </div>
     </section>
   </div>
+</div>
+
+<!-- GRAFO -->
+<div class="graph-card" style="margin-top:12px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <h3 style="margin:0;">Vista de Grafo (en vivo)</h3>
+    <div class="muted">Se actualiza al editar Tasks/Dependencies</div>
+  </div>
+  <div id="dagGraph" aria-label="DAG graph"></div>
+</div>
+
+<!-- PREVIEW/VALIDACIÓN -->
+<div class="card" style="margin-top:12px;">
+  <h3 style="margin-top:0;">Preview / Validación</h3>
+  <div style="display:flex;gap:8px;margin-bottom:8px;">
+    <button class="button secondary" id="btn_show_code">Código</button>
+    <button class="button secondary" id="btn_show_val">Validación</button>
+  </div>
+  <pre id="out_code">—</pre>
+  <pre id="out_val" style="display:none">—</pre>
 </div>
 {% endblock %}
 
@@ -146,27 +267,21 @@
 
 {% block scripts %}
 <script>
-/* ====== Tabs accesibles ====== */
-(function tabs(){
+/* ===== Tabs ===== */
+(function(){
   const KEY='builder:lastTab';
-  const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-  const panes = {
-    general:  document.getElementById('pane-general'),
-    schedule: document.getElementById('pane-schedule'),
-    tasks:    document.getElementById('pane-tasks'),
-    deps:     document.getElementById('pane-deps')
-  };
+  const tabs=[...document.querySelectorAll('[role="tab"]')];
+  const panes = {general:'#pane-general', schedule:'#pane-schedule', tasks:'#pane-tasks', deps:'#pane-deps'};
   function show(name){
     tabs.forEach(t=>t.setAttribute('aria-selected', String(t.dataset.tab===name)));
-    Object.entries(panes).forEach(([k,el])=> el.hidden = (k!==name));
+    Object.entries(panes).forEach(([k,sel])=> document.querySelector(sel).hidden = (k!==name));
     localStorage.setItem(KEY, name);
   }
   tabs.forEach(t => t.addEventListener('click', ()=>show(t.dataset.tab)));
-  const saved = localStorage.getItem(KEY) || 'general';
-  show(saved);
+  show(localStorage.getItem(KEY) || 'general');
 })();
 
-/* ====== Tokens de UI preexistentes ====== */
+/* ===== Config comunes ===== */
 const OP_TYPES = [
   ["python","PythonOperator"], ["bash","BashOperator"],
   ["dummy","DummyOperator"], ["empty","EmptyOperator"],
@@ -178,13 +293,119 @@ const OP_TYPES = [
   ["azure","AzureDataFactoryRunPipelineOperator"], ["kubernetes","KubernetesPodOperator"],
   ["spark","SparkSubmitOperator"], ["databricks","DatabricksSubmitRunOperator"]
 ];
-const SCHEDULES = ["@once","@hourly","@daily","@weekly","@monthly","@yearly","*/5 * * * *","0 * * * *","0 3 * * *","0 0 * * 1","0 0 1 * *"];
+
+const SCHEDULE_PRESETS = [
+  "@once","@hourly","@daily","@weekly","@monthly","@yearly",
+  "*/5 * * * *","0 * * * *","0 3 * * *","0 0 * * 1","0 0 1 * *",
+  "custom"
+];
+
 function el(tag, attrs={}, html=""){ const e=document.createElement(tag); Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v)); if(html) e.innerHTML=html; return e; }
 let tcount = 0;
 function normId(v){ let s=String(v||"").trim().replace(/\s+/g,"_"); s=s.replace(/[^A-Za-z0-9_]/g,"_"); if(!/^[A-Za-z_]/.test(s)) s="t_"+s; return s||"t_task"; }
 function ensureUniqueTaskIds(tasks){ const seen=new Map(); return tasks.map(t=>{ const base=normId(t.task_id); let id=base; if(seen.has(base)){ const n=seen.get(base)+1; seen.set(base,n); id=`${base}_${n}` } else { seen.set(base,1) } return {...t, task_id:id}; }); }
 
-/* ====== TASKS UI ====== */
+/* ===== Scheduling UI ===== */
+window.builderState = window.builderState || { schedule: "@daily", timezone: "America/Santiago" };
+
+(function initScheduleUI(){
+  const sel = document.getElementById('schedule_main');
+  const wrap = document.getElementById('cron_custom_wrap');
+  const cron = document.getElementById('custom_cron');
+
+  SCHEDULE_PRESETS.forEach(v => sel.appendChild(new Option(v, v)));
+  sel.value = window.builderState.schedule && SCHEDULE_PRESETS.includes(window.builderState.schedule)
+              ? window.builderState.schedule : "custom";
+
+  wrap.style.display = (sel.value === "custom") ? "block" : "none";
+  if (sel.value === "custom" && !cron.value) cron.value = window.builderState.schedule || "0 17 * * *";
+
+  sel.addEventListener('change', () => {
+    if (sel.value === "custom") {
+      wrap.style.display = "block"; if (!cron.value) cron.value = "0 17 * * *";
+      window.builderState.schedule = cron.value.trim();
+    } else {
+      wrap.style.display = "none";
+      window.builderState.schedule = sel.value;
+    }
+    document.getElementById('cron_preview').textContent = window.builderState.schedule || "—";
+  });
+
+  cron.addEventListener('input', () => {
+    window.builderState.schedule = cron.value.trim();
+    document.getElementById('cron_preview').textContent = window.builderState.schedule || "—";
+  });
+
+  const tz = document.getElementById('sched_tz');
+  if (tz) {
+    tz.value = window.builderState.timezone || tz.value || "UTC";
+    tz.addEventListener('input', () => window.builderState.timezone = tz.value.trim() || "UTC");
+  }
+})();
+
+function showModeGroups(){
+  const m = document.getElementById('sched_mode').value;
+  ['only-daily','only-hourly','only-every_n'].forEach(cls =>
+    document.querySelectorAll('.'+cls).forEach(el => el.style.display='none')
+  );
+  if (m==='daily')   document.querySelectorAll('.only-daily').forEach(el=>el.style.display='block');
+  if (m==='hourly')  document.querySelectorAll('.only-hourly').forEach(el=>el.style.display='block');
+  if (m==='every_n') document.querySelectorAll('.only-every_n').forEach(el=>el.style.display='block');
+}
+document.getElementById('sched_mode').addEventListener('change', showModeGroups);
+showModeGroups();
+
+function buildCronFromUI(){
+  const m = document.getElementById('sched_mode').value;
+  if (m==='daily'){
+    const hh = +document.getElementById('daily_hh').value || 17;
+    const mm = +document.getElementById('daily_mm').value || 0;
+    return `${mm} ${hh} * * *`;
+  }
+  if (m==='hourly'){
+    const mm = +document.getElementById('hourly_mm').value || 0;
+    const from = +document.getElementById('hourly_from').value || 9;
+    const to   = +document.getElementById('hourly_to').value   || 21;
+    return `${mm} ${from}-${to} * * *`;
+  }
+  if (m==='every_n'){
+    const n   = +document.getElementById('n_minutes').value || 30;
+    const from = +document.getElementById('n_from').value   || 9;
+    const to   = +document.getElementById('n_to').value     || 21;
+    return `*/${n} ${from}-${to} * * *`;
+  }
+  return window.builderState.schedule || "@daily";
+}
+
+document.getElementById('btn_build_cron').addEventListener('click', () => {
+  const cron = buildCronFromUI();
+  const sel  = document.getElementById('schedule_main');
+  const wrap = document.getElementById('cron_custom_wrap');
+  const input= document.getElementById('custom_cron');
+
+  sel.value = "custom";
+  wrap.style.display = "block";
+  input.value = cron;
+
+  window.builderState.schedule = cron;
+  document.getElementById('cron_preview').textContent = cron || '—';
+});
+
+document.getElementById('btn_preview_runs').addEventListener('click', async ()=>{
+  const span = document.getElementById('runs_preview');
+  const cron = window.builderState.schedule || "@daily";
+  const tz = window.builderState.timezone || "UTC";
+  try {
+    const r = await fetch('/api/schedule/preview', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ cron, timezone: tz, count: 5 })
+    });
+    const data = await r.json().catch(()=>({error:'resp inválida'}));
+    span.textContent = Array.isArray(data.next_runs) ? data.next_runs.join('  ·  ') : (data.error || '—');
+  } catch { span.textContent = 'Error de red'; }
+});
+
+/* ===== Tasks UI ===== */
 function taskIdOptions(){
   return Array.from(document.querySelectorAll('#tasks input[data-k="task_id"]'))
     .map(i=>normId(i.value)).filter(Boolean)
@@ -200,7 +421,7 @@ function refreshTaskSelects(){
   });
 }
 function addTask(type){
-  const wrap = el("div",{class:"card", style:"grid-column: span 6;"});
+  const wrap = el("div",{class:"section-card"});
   const tid = `t${++tcount}`;
   wrap.appendChild(el("div",{},`<b>${type}</b>`));
   wrap.appendChild(el("label",{},"task_id"));
@@ -230,21 +451,74 @@ function addTask(type){
   if(type==="DataflowCreateJavaJobOperator"){ add("gcp_conn_id","gcp_conn_id","google_cloud_default"); add("jar","jar","/path/app.jar"); add("job_name","job_name","dataflow-job"); add("options","options",'{"key":"value"}'); }
   if(type==="AzureDataFactoryRunPipelineOperator"){ add("azure_data_factory_conn_id","azure_data_factory_conn_id","azure_data_factory_default"); add("pipeline_name","pipeline_name","pipeline1"); add("parameters","parameters",'{"p":1}'); }
   if(type==="DockerOperator"){ add("image","image","python:3.11"); add("api_version","api_version","auto"); add("command","command","echo hello"); add("docker_url","docker_url","unix://var/run/docker.sock"); add("auto_remove","auto_remove","true"); }
-  if(type==="KubernetesPodOperator"){ add("name","name","pod-task"); add("namespace","namespace","default"); add("image","image","python:3.11"); add("cmds","cmds",'["python","-c"]'); add("arguments","arguments",'["print(\\"hi\\")"]'); }
+  if(type==="KubernetesPodOperator"){ add("name","name","pod-task"); add("namespace","namespace","default"); add("image","image","python:3.11"); add("cmds","cmds",'["python","-c"]'); add("arguments","arguments",'["print(\\"hi\\")"]'); add("env","env",'{"ENV":"value"}'); }
   if(type==="SparkSubmitOperator"){ add("application","application","/path/app.py"); add("conn_id","conn_id","spark_default"); add("application_args","application_args",'["--flag","value"]'); }
   if(type==="DatabricksSubmitRunOperator"){ add("databricks_conn_id","databricks_conn_id","databricks_default"); add("json","json",'{"run_name":"demo","new_cluster":{...}}',true); }
   if(type==="SimpleHttpOperator"){ add("http_conn_id","http_conn_id","http_default"); add("endpoint","endpoint","/"); add("method","method","GET"); add("data","data",""); add("headers","headers",'{"Content-Type":"application/json"}'); }
   if(type==="EmailOperator"){ add("to","to","example@example.com"); add("subject","subject","Airflow Notification"); add("html_content","html_content","Job done."); }
 
+  if(type==="CustomOperator"){
+    const help = el("div",{class:"muted"}, "Completa import path, class y kwargs (JSON).");
+    wrap.appendChild(help);
+    const row = el("div", {style:"display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px;"});
+    const ip = el("div"); ip.appendChild(el("label",{},"import_path")); ip.appendChild(el("input",{"data-k":"import_path",placeholder:"airflow.providers.xxx.operators.yyy"}));
+    const cl = el("div"); cl.appendChild(el("label",{},"class_name"));   cl.appendChild(el("input",{"data-k":"class_name",placeholder:"SomeOperator"}));
+    row.appendChild(ip); row.appendChild(cl);
+    wrap.appendChild(row);
+    wrap.appendChild(el("label",{},"kwargs (JSON)"));
+    wrap.appendChild(el("textarea",{"data-k":"kwargs",style:"height:120px;"}, "{\n  \n}"));
+  }
+
+  if(type==="SSHOperator"){
+    const help = el("div",{class:"muted"}, "Ejecuta comando remoto por SSH (usa Connection ssh_conn_id).");
+    wrap.appendChild(help);
+    wrap.appendChild(el("label",{},"ssh_conn_id"));
+    wrap.appendChild(el("input",{"data-k":"ssh_conn_id",placeholder:"ssh_default"}));
+    wrap.appendChild(el("label",{},"remote_host (opcional)"));
+    wrap.appendChild(el("input",{"data-k":"remote_host",placeholder:"host remoto si tu Conn no lo define"}));
+    wrap.appendChild(el("label",{},"command"));
+    wrap.appendChild(el("textarea",{"data-k":"command",style:"height:88px;"},"echo 'hola'"));
+    wrap.appendChild(el("label",{},"environment (JSON opcional)"));
+    wrap.appendChild(el("textarea",{"data-k":"environment",style:"height:72px;"},'{"KEY":"VALUE"}'));
+    wrap.appendChild(el("label",{},"get_pty"));
+    const sel = el("select",{"data-k":"get_pty"}); sel.innerHTML='<option value="true">true</option><option value="false">false</option>'; wrap.appendChild(sel);
+  }
+
+  if(type==="WinRMOperator"){
+    const help = el("div",{class:"muted"}, "Ejecuta comando en Windows por WinRM (usa Connection winrm_conn_id).");
+    wrap.appendChild(help);
+    wrap.appendChild(el("label",{},"winrm_conn_id"));
+    wrap.appendChild(el("input",{"data-k":"winrm_conn_id",placeholder:"winrm_default"}));
+    wrap.appendChild(el("label",{},"command (PowerShell o cmd)"));
+    wrap.appendChild(el("textarea",{"data-k":"command",style:"height:88px;"},"Write-Output 'hola'"));
+    wrap.appendChild(el("label",{},"powershell"));
+    const sel = el("select",{"data-k":"powershell"}); sel.innerHTML='<option value="true">true</option><option value="false">false</option>'; wrap.appendChild(sel);
+  }
+
+  const adv = el("details",{style:"margin-top:8px;"});
+  adv.appendChild(el("summary",{}, "Avanzado (queue/pool/priority)"));
+  const grid = el("div",{style:"display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:8px;margin-top:8px;"});
+  grid.innerHTML = `
+    <div><label>queue</label><input data-k="queue" placeholder="celery-high" /></div>
+    <div><label>pool</label><input data-k="pool" placeholder="default_pool" /></div>
+    <div><label>priority_weight</label><input data-k="priority_weight" type="number" min="1" step="1" /></div>`;
+  const row2 = el("div",{style:"display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:8px;margin-top:8px;"});
+  row2.innerHTML = `
+    <div><label>depends_on_past</label><select data-k="depends_on_past"><option value="">no</option><option value="true">sí</option></select></div>
+    <div><label>task_concurrency</label><input data-k="task_concurrency" type="number" min="1" step="1" /></div>`;
+  adv.appendChild(grid); adv.appendChild(row2);
+  wrap.appendChild(adv);
+
   const del = el("button",{},"Eliminar");
-  del.onclick = () => { wrap.remove(); refreshTaskSelects(); };
+  del.onclick = () => { wrap.remove(); refreshTaskSelects(); updateGraph(); };
   wrap.appendChild(el("div",{style:"margin-top:6px;"})).appendChild(del);
 
   document.getElementById("tasks").appendChild(wrap);
   refreshTaskSelects();
+  updateGraph();
 }
 
-/* ====== Dependencias ====== */
+/* Dependencias */
 function makeTaskSelect(selected){
   const sel = el("select", {"data-k":"_sel"});
   taskIdOptions().forEach(id => {
@@ -255,15 +529,16 @@ function makeTaskSelect(selected){
   return sel;
 }
 function addDep(){
-  const wrap = el("div",{class:"card"});
+  const wrap = el("div",{class:"section-card"});
   wrap.appendChild(el("label",{},"upstream"));
   wrap.appendChild(makeTaskSelect());
   wrap.appendChild(el("label",{},"downstream"));
   wrap.appendChild(makeTaskSelect());
   const del = el("button",{},"Eliminar");
-  del.onclick = () => wrap.remove();
+  del.onclick = () => { wrap.remove(); updateGraph(); };
   wrap.appendChild(el("div",{style:"margin-top:6px;"})).appendChild(del);
   document.getElementById("deps").appendChild(wrap);
+  updateGraph();
 }
 function makeDownstreamSelect(selected){
   const sel = el("select", {"data-k":"downstream", style:"width:100%;"});
@@ -272,7 +547,7 @@ function makeDownstreamSelect(selected){
   return sel;
 }
 function addExternalDep(){
-  const wrap = el("div",{class:"card"});
+  const wrap = el("div",{class:"section-card"});
   wrap.appendChild(el("label",{},"external_dag_id"));
   wrap.appendChild(el("input",{"data-k":"external_dag_id",placeholder:"otro_dag_id"}));
   wrap.appendChild(el("label",{},"external_task_id (opcional)"));
@@ -286,40 +561,31 @@ function addExternalDep(){
   wrap.appendChild(el("label",{},"Conectar a (downstream local)"));
   wrap.appendChild(makeDownstreamSelect());
   const del = el("button",{},"Eliminar");
-  del.onclick = () => wrap.remove();
+  del.onclick = () => { wrap.remove(); updateGraph(); };
   wrap.appendChild(el("div",{style:"margin-top:6px;"})).appendChild(del);
   document.getElementById("extdeps").appendChild(wrap);
+  updateGraph();
 }
 
-/* ====== Schedule select que rellena #schedule ====== */
-(function initSchedule(){
-  const sch = document.getElementById("schedule");
-  if(!sch) return;
-  const wrapper = sch.parentElement;
-  const sel = el("select",{id:"schedule_sel",style:"width:100%;"});
-  SCHEDULES.forEach(s => sel.appendChild(el("option",{value:s}, s)));
-  sel.appendChild(el("option",{value:"custom"},"custom (cron libre)"));
-  if(!sch.value) sch.value = sel.options[0].value;
-  sel.onchange = () => { if(sel.value!=="custom") sch.value = sel.value; sch.focus(); };
-  wrapper.insertBefore(sel, sch);
-})();
-
-/* ====== Toolbar (selector operador + quick buttons) ====== */
+/* Toolbar + selects */
 (function initOps(){
   const sel = document.getElementById("opsel");
   if(sel){ OP_TYPES.forEach(([k,v])=> sel.appendChild(el("option",{value:v}, `${k} — ${v}`))); }
-  document.getElementById("add_op")?.addEventListener('click', ()=> addTask(sel.value));
-  document.getElementById("add_empty") ?.addEventListener('click', ()=> addTask("EmptyOperator"));
-  document.getElementById("add_bash")  ?.addEventListener('click', ()=> addTask("BashOperator"));
+  document.getElementById("add_op")   ?.addEventListener('click', ()=> addTask(sel.value));
+  document.getElementById("add_empty")?.addEventListener('click', ()=> addTask("EmptyOperator"));
+  document.getElementById("add_bash") ?.addEventListener('click', ()=> addTask("BashOperator"));
   document.getElementById("add_python")?.addEventListener('click', ()=> addTask("PythonOperator"));
-  document.getElementById("add_dep")   ?.addEventListener('click', addDep);
+  document.getElementById("add_dep")  ?.addEventListener('click', addDep);
   document.getElementById("add_extdep")?.addEventListener('click', addExternalDep);
+  document.getElementById("add_custom")?.addEventListener('click', ()=> addTask("CustomOperator"));
+  document.getElementById("add_ssh")   ?.addEventListener('click', ()=> addTask("SSHOperator"));
+  document.getElementById("add_winrm") ?.addEventListener('click', ()=> addTask("WinRMOperator"));
 })();
 
-/* ====== Collect + Preview/Download (reusan tu API) ====== */
+/* ===== Collect + Preview/Download ===== */
 function qAll(root, sel){ return Array.from((root||document).querySelectorAll(sel)); }
 function collect(){
-  const taskCards = qAll(document, "#tasks > .card");
+  const taskCards = qAll(document, "#tasks > .section-card");
   let tasks = taskCards.map(card => {
     const o = {};
     qAll(card, "[data-k]").forEach(inp => {
@@ -330,12 +596,12 @@ function collect(){
   });
   tasks = ensureUniqueTaskIds(tasks);
 
-  const deps = qAll(document, "#deps > .card").map(card => {
+  const deps = qAll(document, "#deps > .section-card").map(card => {
     const [upSel, downSel] = qAll(card, 'select[data-k="_sel"]');
     return { upstream: upSel?.value || "", downstream: downSel?.value || "" };
   });
 
-  const extDeps = qAll(document, "#extdeps > .card").map(card => {
+  const extDeps = qAll(document, "#extdeps > .section-card").map(card => {
     const ext = {}; qAll(card, "[data-k]").forEach(inp => ext[inp.getAttribute("data-k")] = inp.value); return ext;
   });
   extDeps.forEach((e, idx) => {
@@ -357,7 +623,8 @@ function collect(){
     retries: parseInt(document.getElementById("retries")?.value || "1", 10),
     retry_minutes: parseInt(document.getElementById("retry_minutes")?.value || "5", 10),
     start_date: document.getElementById("start_date")?.value || "",
-    schedule: document.getElementById("schedule")?.value || "@daily",
+    schedule: (window.builderState?.schedule) || "@daily",
+    timezone: (window.builderState?.timezone) || "UTC",
     catchup: !!document.getElementById("catchup")?.checked,
     tags: (document.getElementById("tags")?.value || "").split(",").map(s => s.trim()).filter(Boolean),
     tasks, dependencies: deps
@@ -367,12 +634,11 @@ function collect(){
 async function doPreview(){
   const spec = collect();
   const r = await fetch("/api/builder/preview", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(spec)});
-  const data = await r.json();
+  const data = await r.json().catch(()=>({}));
   document.getElementById("out_code").textContent = data.code || "";
   document.getElementById("out_val").textContent  = JSON.stringify(data.validation || {}, null, 2);
   document.getElementById("statusChip").textContent = (data.validation?.valid ? "válido" : "con errores");
 }
-
 document.getElementById("btn_preview")?.addEventListener("click", doPreview);
 document.getElementById("btn_preview_footer")?.addEventListener("click", doPreview);
 
@@ -383,11 +649,9 @@ document.getElementById("btn_download")?.addEventListener("click", async ()=>{
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
   a.download = (spec.dag_id || "dag_generated") + ".py"; a.click();
 });
-document.getElementById("btn_download_footer")?.addEventListener("click", async ()=>{
-  document.getElementById("btn_download")?.click();
-});
+document.getElementById("btn_download_footer")?.addEventListener("click", ()=> document.getElementById("btn_download").click());
 
-/* Switch entre Código y Validación */
+/* Switch Código/Validación */
 document.getElementById("btn_show_code")?.addEventListener("click", ()=>{
   document.getElementById("out_code").style.display="block";
   document.getElementById("out_val").style.display="none";
@@ -405,5 +669,78 @@ document.getElementById("btn_show_val")?.addEventListener("click", ()=>{
     d.value = `${y}-${m}-${dd}`;
   }
 })();
+
+/* Modo compacto persistente */
+(function initCompact(){
+  const KEY = 'builder:compact';
+  const pane = document.getElementById('pane-tasks');
+  const chk  = document.getElementById('toggle_compact');
+  if(!pane || !chk) return;
+  function apply(on){ pane.classList.toggle('compact', !!on); localStorage.setItem(KEY, on ? '1' : '0'); }
+  const saved = localStorage.getItem(KEY) === '1';
+  chk.checked = saved; apply(saved);
+  chk.addEventListener('change', e => apply(e.target.checked));
+})();
+
+/* ===== DAG Graph (Cytoscape) ===== */
+let cy = null;
+function graphElementsFromSpec(spec){
+  const nodes = [], edges = [], seenNode = new Set(), seenEdge = new Set();
+  (spec.tasks || []).forEach(t => {
+    const id = t.task_id; if(!id || seenNode.has(id)) return; seenNode.add(id);
+    nodes.push({ data: { id, label: `${id}\n${t.type || 'Task'}` }, classes: (t.type==='ExternalTaskSensor')?'external':'internal' });
+  });
+  (spec.dependencies || []).forEach(d => {
+    const u=d.upstream, v=d.downstream; if(!u||!v) return;
+    const key = `${u}>>${v}`; if(seenEdge.has(key)) return; seenEdge.add(key);
+    edges.push({ data: { id: key, source: u, target: v } });
+  });
+  return { nodes, edges };
+}
+function ensureCy(){
+  if(cy) return cy;
+  const text   = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e6eaf2';
+  const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#1f2a44';
+  const brand  = getComputedStyle(document.documentElement).getPropertyValue('--brand').trim() || '#017CEE';
+  cy = cytoscape({
+    container: document.getElementById('dagGraph'),
+    wheelSensitivity: 0.2, pixelRatio: 1,
+    layout: { name: 'breadthfirst', directed: true, spacingFactor: 1.15, padding: 20 },
+    style: [
+      { selector: 'node', style: {
+          'shape':'round-rectangle','background-color':'#151a28','border-color':border,'border-width':1.5,
+          'padding':'8px','label':'data(label)','font-size':12,'font-family':'ui-monospace, Menlo, Consolas, monospace',
+          'text-wrap':'wrap','text-valign':'center','text-halign':'center','color':text,'width':'label','height':'label'
+      }},
+      { selector: 'node.external', style: { 'background-color':'#0b1220','border-style':'dashed','border-color':brand }},
+      { selector: 'edge', style: {
+          'curve-style':'taxi','taxi-direction':'downward','taxi-turn':20,'width':1.2,'line-color':border,
+          'target-arrow-shape':'triangle','target-arrow-color':border
+      }},
+      { selector: ':selected', style: { 'border-color': brand, 'line-color': brand, 'target-arrow-color': brand } }
+    ]
+  });
+  window.addEventListener('resize', () => cy.resize());
+  return cy;
+}
+let graphDebounce = null;
+function updateGraph(){
+  if(graphDebounce){ cancelAnimationFrame(graphDebounce); }
+  graphDebounce = requestAnimationFrame(()=>{
+    const spec = collect();
+    const {nodes, edges} = graphElementsFromSpec(spec);
+    const g = ensureCy();
+    g.json({ elements: { nodes, edges }});
+    g.layout({ name: 'breadthfirst', directed: true, spacingFactor: 1.15, padding: 20 }).run();
+  });
+}
+document.getElementById("btn_preview")?.addEventListener("click", updateGraph);
+document.getElementById("btn_preview_footer")?.addEventListener("click", updateGraph);
+['tasks','deps','extdeps'].forEach(id=>{
+  const root = document.getElementById(id);
+  if(root){ root.addEventListener('input', updateGraph); root.addEventListener('change', updateGraph); }
+});
+updateGraph();
+document.getElementById('themeToggle')?.addEventListener('click', ()=>{ setTimeout(()=>{ cy=null; updateGraph(); }, 50); });
 </script>
 {% endblock %}

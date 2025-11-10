@@ -1,39 +1,310 @@
 {% extends "base.html" %}
-{% block content %}
-  <div class="card">
-    <h3>Validar DAG (pega tu código)</h3>
-    <textarea id="code" style="width:100%;height:260px;font-family:ui-monospace,Consolas,Menlo,monospace;"></textarea>
-    <div style="margin-top:10px;display:flex;gap:8px;">
-      <button id="btnExample">Ejemplo DAG 3.1</button>
-      <button id="btnValidate">Validar</button>
-    </div>
-    <pre id="out" style="margin-top:12px;">Resultado aquí…</pre>
-  </div>
-  <script>
-    const ex = `from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.operators.empty import EmptyOperator
-
-default_args = {"owner":"data-team","retries":1,"retry_delay":timedelta(minutes=5)}
-
-with DAG(
-    dag_id="example_etl",
-    start_date=datetime(2025,1,1),
-    schedule="0 3 * * *",
-    catchup=False,
-    default_args=default_args,
-    tags=["etl"]
-) as dag:
-    a = EmptyOperator(task_id="start")
-    b = EmptyOperator(task_id="end")
-    a >> b
-`;
-    document.getElementById('btnExample').onclick = () => { document.getElementById('code').value = ex; };
-    document.getElementById('btnValidate').onclick = async () => {
-      const code = document.getElementById('code').value || "";
-      const r = await fetch('/api/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({content: code}) });
-      const data = await r.json();
-      document.getElementById('out').textContent = JSON.stringify(data, null, 2);
-    };
-  </script>
+{% block title %}Validación · Airflow DAG Studio{% endblock %}
+{% block page_title %}Validación de DAG{% endblock %}
+{% block page_subtitle %}Pega tu DAG .py para verificar compatibilidad y visualizar el flujo{% endblock %}
+{% block header_actions %}
+  <a class="button ghost" href="/validate">Limpiar</a>
+  <button class="button" id="btn_validate_top">Validar</button>
 {% endblock %}
+
+{% block head_extra %}
+<style>
+  .fullcard { background:var(--panel); border:1px solid var(--border);
+              border-radius:var(--radius); padding:16px; }
+  .graph-card { background:var(--panel); border:1px solid var(--border);
+                border-radius:var(--radius); padding:12px; margin-top:12px; }
+  #dag_code { width:100%; height:32vh; resize:vertical; }
+  #dagGraph { width:100%; height:70vh; min-height:420px; border:1px dashed var(--border);
+              border-radius:10px; background:
+                radial-gradient(var(--border) 1px, transparent 0) 0 0/16px 16px,
+                radial-gradient(var(--border) 1px, transparent 0) 8px 8px/16px 16px; margin-top:8px; }
+  .graph-toolbar { display:flex; gap:8px; align-items:center; }
+  pre#validate_out { max-height:none; }
+
+  /* alturas */
+  #dag_code { display:none; } /* será reemplazado por CodeMirror */
+  .CodeMirror { height: 32vh; border:1px solid var(--border); border-radius: 8px; }
+  #dagGraph { width:100%; height:70vh; min-height:420px; border:1px dashed var(--border);
+              border-radius:10px;
+              background: radial-gradient(var(--border) 1px, transparent 0) 0 0/16px 16px,
+                          radial-gradient(var(--border) 1px, transparent 0) 8px 8px/16px 16px; }
+
+  /* colores por familia (clases de Cytoscape) */
+  .legend { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; border:1px solid var(--border); font-size:12px; }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  /* Colores (puedes ajustar la paleta a tu tema) */
+  .c-db   { background-color:#1f6feb; }   /* Postgres/MySQL/MSSQL/Oracle/Snowflake/Sqlite */
+  .c-aws  { background-color:#f59e0b; }   /* S3/Lambda/Glue */
+  .c-gcp  { background-color:#10b981; }   /* BigQuery/Dataflow */
+  .c-az   { background-color:#3b82f6; }   /* Azure */
+  .c-k8s  { background-color:#60a5fa; }   /* KubernetesPodOperator */
+  .c-spark{ background-color:#f97316; }   /* Spark/Databricks */
+  .c-sys  { background-color:#a78bfa; }   /* Bash/Python/Docker/HTTP/Email */
+  .c-remote{background-color:#ef4444;}    /* SSH/WinRM */
+  .c-sensor{background-color:#22d3ee;}    /* Sensors (ExternalTaskSensor) */
+
+  /* Halo por estado */
+  .error  { box-shadow: 0 0 0 3px rgba(239,68,68,.6); }
+  .warn   { box-shadow: 0 0 0 3px rgba(245,158,11,.55); }
+
+
+</style>
+<!-- Cytoscape -->
+<link rel="stylesheet" href="https://unpkg.com/codemirror@5.65.16/lib/codemirror.css">
+<link rel="stylesheet" href="https://unpkg.com/codemirror@5.65.16/theme/material-darker.css">
+<script src="https://unpkg.com/codemirror@5.65.16/lib/codemirror.js"></script>
+<script src="https://unpkg.com/codemirror@5.65.16/mode/python/python.js"></script>
+<script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/cytoscape-svg@0.4.0/cytoscape-svg.js"></script>
+if (window.cytoscape && window.cytoscapeSvg) {
+    window.cytoscape.use(window.cytoscapeSvg);
+  }
+{% endblock %}
+
+{% block content %}
+<!-- Editor a todo el ancho -->
+<div class="fullcard">
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+    <label style="font-weight:600;">Validar DAG (pega tu código)</label>
+    <div style="display:flex; gap:8px;">
+      <button id="btn_validate" class="button">Validar</button>
+      <button id="btn_parse_graph" class="button secondary">Actualizar grafo</button>
+    </div>
+  </div>
+  <textarea id="dag_code" placeholder="# pega aquí tu DAG"></textarea>
+  <p class="muted" style="margin:.5rem 0 0">El grafo también se genera al escribir/pegar (con debounce).</p>
+</div>
+
+<!-- Resultado ARRIBA -->
+<div class="fullcard" style="margin-top:12px;">
+  <div style="font-weight:600; margin-bottom:8px;">Resultado</div>
+  <pre id="validate_out">—</pre>
+</div>
+
+<!-- Grafo ABAJO a todo el alto -->
+<div class="graph-card" style="margin-top:12px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px; flex-wrap:wrap;">
+    <h3 style="margin:0;">Vista de Grafo</h3>
+    <div class="legend">
+      <div class="chip"><span class="sw" style="border-color:var(--c-db)"></span><span class="muted">DB</span></div>
+      <div class="chip"><span class="sw" style="border-color:var(--c-aws)"></span><span class="muted">AWS</span></div>
+      <div class="chip"><span class="sw" style="border-color:var(--c-gcp)"></span><span class="muted">GCP</span></div>
+      <div class="chip"><span class="sw" style="border-color:var(--c-az)"></span><span class="muted">Azure</span></div>
+      <div class="chip"><span class="sw" style="border-color:var(--c-k8s)"></span><span class="muted">Kubernetes</span></div>
+      <div class="chip"><span class="sw" style="border-color:var(--c-os)"></span><span class="muted">SSH/WinRM</span></div>
+      <div class="chip"><span class="sw" style="border-color:var(--c-generic)"></span><span class="muted">Genérico</span></div>
+    </div>
+    <div class="graph-toolbar" style="margin-left:auto; display:flex; gap:8px;">
+      <button id="btn_graph_fit" class="button ghost">Ajustar</button>
+      <button id="btn_graph_center" class="button ghost">Recentrar</button>
+      <button id="btn_graph_png" class="button ghost">PNG</button>
+      <button id="btn_graph_svg" class="button ghost">SVG</button>
+      <button id="btn_copy_json" class="button ghost">Copiar JSON</button>
+    </div>
+  </div>
+  <div id="dagGraph" aria-label="DAG graph"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ============ Editor: CodeMirror ============
+let editor = CodeMirror.fromTextArea(document.getElementById('dag_code'), {
+  mode: "python",
+  theme: "material-darker",
+  lineNumbers: true,
+  indentUnit: 4,
+  tabSize: 4,
+  lineWrapping: true,
+});
+editor.refresh();
+
+// ============ Cytoscape ============
+let cy = null;
+function ensureCy(){
+  if(cy) return cy;
+  const text   = getComputedStyle(document.documentElement).getPropertyValue('--text').trim()   || '#e6eaf2';
+  const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#1f2a44';
+  cy = cytoscape({
+    container: document.getElementById('dagGraph'),
+    wheelSensitivity: 0.2,
+    layout: { name:'breadthfirst', directed:true, spacingFactor:1.15, padding:24 },
+    style: [
+      { selector: 'node',
+        style: { 'shape':'round-rectangle','background-color':'#0f172a','border-color':border,'border-width':1.5,
+          'padding':'8px','label':'data(label)','font-size':12,'font-family':'ui-monospace, Menlo, Consolas, monospace',
+          'text-wrap':'wrap','text-valign':'center','text-halign':'center','color':text,'width':'label','height':'label'} },
+      { selector: 'node.external', style: { 'border-style':'dashed','border-color':'#22d3ee' } },
+      /* familias → color de relleno */
+      { selector: 'node.db',     style: { 'background-color':'#1f6feb' } },
+      { selector: 'node.aws',    style: { 'background-color':'#f59e0b' } },
+      { selector: 'node.gcp',    style: { 'background-color':'#10b981' } },
+      { selector: 'node.az',     style: { 'background-color':'#3b82f6' } },
+      { selector: 'node.k8s',    style: { 'background-color':'#60a5fa' } },
+      { selector: 'node.spark',  style: { 'background-color':'#f97316' } },
+      { selector: 'node.sys',    style: { 'background-color':'#a78bfa' } },
+      { selector: 'node.remote', style: { 'background-color':'#ef4444' } },
+      { selector: 'node.warn',   style: { 'border-width':3, 'border-color':'#f59e0b' } },
+      { selector: 'node.error',  style: { 'border-width':3, 'border-color':'#ef4444' } },
+      { selector: 'edge',
+        style: { 'curve-style':'taxi','taxi-direction':'downward','taxi-turn':20,'width':1.2,'line-color':border,
+                 'target-arrow-shape':'triangle','target-arrow-color':border } },
+    ]
+  });
+  window.addEventListener('resize', () => cy.resize());
+  return cy;
+}
+
+// Clasificación por clase de operador → familia para color
+function familyFromCls(cls){
+  cls = (cls || "").toLowerCase();
+  if (/postgres|mysql|mssql|oracle|snowflake|sqlite/.test(cls)) return 'db';
+  if (/s3|lambda|glue|aws/.test(cls)) return 'aws';
+  if (/bigquery|dataflow|gcp/.test(cls)) return 'gcp';
+  if (/azure/.test(cls)) return 'az';
+  if (/kubernetes/.test(cls)) return 'k8s';
+  if (/spark|databricks/.test(cls)) return 'spark';
+  if (/ssh|winrm/.test(cls)) return 'remote';
+  if (/sensor/.test(cls)) return 'sensor';
+  if (/bash|python|docker|http|email|empty/.test(cls)) return 'sys';
+  return 'sys';
+}
+
+// Render con nodos/edges + issues desde backend
+function renderGraphFromBackend(data){
+  const els = { nodes: [], edges: [] };
+  const seenN = new Set(), seenE = new Set();
+
+  const issueMap = new Map(); // task_id -> {level, msgs[]}
+  (data.issues || []).forEach(it => {
+    const k = it.task_id;
+    if(!k) return;
+    if(!issueMap.has(k)) issueMap.set(k, { level: 'info', msgs: [] });
+    const slot = issueMap.get(k);
+    slot.msgs.push(it.msg);
+    if(it.level === 'error') slot.level = 'error';
+    else if (it.level === 'warning' && slot.level !== 'error') slot.level = 'warning';
+  });
+
+  (data.nodes || []).forEach(n => {
+    if(!n || !n.id) return;
+    if(seenN.has(n.id)) return;
+    seenN.add(n.id);
+    const fam = familyFromCls(n.cls);
+    const classes = [fam];
+    if(n.cls === 'ExternalTaskSensor') classes.push('external');
+    const issue = issueMap.get(n.id);
+    if(issue){
+      classes.push(issue.level === 'error' ? 'error' : 'warn');
+    }
+    els.nodes.push({
+      data: { id:n.id, label:`${n.id}\n${n.cls || 'Task'}`, tooltip: issue ? issue.msgs.join('\n') : '' },
+      classes: classes.join(' ')
+    });
+  });
+
+  (data.edges || []).forEach(e => {
+    if(!Array.isArray(e) || e.length < 2) return;
+    const key = `${e[0]}>>${e[1]}`;
+    if(seenE.has(key)) return;
+    seenE.add(key);
+    els.edges.push({ data:{ id:key, source:e[0], target:e[1] }});
+  });
+
+  const g = ensureCy();
+  g.json({ elements: els });
+  g.layout({ name:'breadthfirst', directed:true, spacingFactor:1.15, padding:24 }).run();
+  g.fit();
+
+  // Tooltip simple con title (fallback)
+  g.nodes().forEach(n => {
+    const tip = n.data('tooltip');
+    if(tip) n.qtip?.destroy?.(); // si usas qtip; si no, dejamos title
+    n.popper && n.popper.destroy && n.popper.destroy();
+    n._private.data.title = tip; // para el native title de cy
+  });
+}
+
+// ====== Validación (backend) ======
+async function doValidate(){
+  const code = editor.getValue();
+  let data;
+  try {
+    const r = await fetch("/api/airflow/validate", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "Accept":"application/json" },
+      body: JSON.stringify({ code })
+    });
+    const ct = (r.headers.get("content-type") || "").toLowerCase();
+    data = ct.includes("application/json") ? await r.json()
+                                           : { ok:r.ok, status:r.status, content_type:ct, raw: await r.text() };
+  } catch (err) {
+    data = { ok:false, error: String(err) };
+  }
+  document.getElementById("validate_out").textContent = JSON.stringify(data, null, 2);
+  if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
+    renderGraphFromBackend(data);
+  }
+}
+
+// Botones
+document.getElementById("btn_validate")?.addEventListener("click", doValidate);
+document.getElementById("btn_validate_top")?.addEventListener("click", doValidate);
+document.getElementById("btn_parse_graph")?.addEventListener("click", doValidate);
+document.getElementById('btn_graph_fit')?.addEventListener('click', ()=> ensureCy().fit());
+document.getElementById('btn_graph_center')?.addEventListener('click', ()=>{ const g=ensureCy(); g.center(); g.fit(); });
+
+// Export PNG/SVG
+document.getElementById('btn_graph_png')?.addEventListener('click', ()=>{
+  const g = ensureCy(); const png = g.png({ full:true, scale:2 });
+  const a = document.createElement('a'); a.href = png; a.download = 'dag.png'; a.click();
+});
+document.getElementById('btn_graph_svg')?.addEventListener('click', ()=>{
+  const g = ensureCy();
+  if (typeof g.svg !== 'function') {
+    // intento de registro tardío
+    if (window.cytoscape && window.cytoscapeSvg) {
+      window.cytoscape.use(window.cytoscapeSvg);
+    }
+  }
+  if (typeof g.svg !== 'function') {
+    alert('Exportar SVG requiere cytoscape-svg');
+    return;
+  }
+  const svg = g.svg({ full:true, scale:1 });
+  const blob = new Blob([svg], {type: 'image/svg+xml;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'dag.svg'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// Copiar JSON de validación
+document.getElementById('btn_copy_json')?.addEventListener('click', ()=>{
+  const txt = document.getElementById('validate_out').textContent || "";
+  navigator.clipboard.writeText(txt).then(()=> {
+    // pequeño feedback visual
+    const btn = document.getElementById('btn_copy_json'); const old = btn.textContent;
+    btn.textContent = 'Copiado ✓'; setTimeout(()=> btn.textContent = old, 1200);
+  });
+});
+
+// Debounce al escribir
+let deb = null;
+editor.on('change', ()=>{
+  if(deb) cancelAnimationFrame(deb);
+  deb = requestAnimationFrame(doValidate);
+});
+
+// Cambio de tema
+document.getElementById('themeToggle')?.addEventListener('click', ()=>{
+  setTimeout(()=>{ cy = null; doValidate(); }, 80);
+});
+
+// Arranque
+doValidate();
+</script>
+{% endblock %}
+
+

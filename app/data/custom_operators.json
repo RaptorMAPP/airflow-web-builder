@@ -1,0 +1,14 @@
+[
+  {
+    "key": "gcp.bigquery.insert_job",
+    "label": "GCP — BigQueryInsertJobOperator",
+    "import_path": "airflow.providers.google.cloud.operators.bigquery",
+    "class_name": "BigQueryInsertJobOperator",
+    "defaults": {
+      "kwargs": {
+        "job_id": "job_${ds_nodash}",
+        "configuration": { "query": { "query": "SELECT 1" } }
+      }
+    }
+  }
+]

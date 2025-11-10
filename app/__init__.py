@@ -30,6 +30,8 @@ def create_app():
     from .api_airflow import api_airflow_bp
     from .validator import validator_bp
     from .builder import builder_bp
+    from .schedule_preview import schedule_preview_bp
+    app.register_blueprint(schedule_preview_bp)
     app.register_blueprint(builder_bp)
     app.register_blueprint(validator_bp)
     app.register_blueprint(ui_bp)
