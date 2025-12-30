@@ -442,6 +442,17 @@ def build_dag_code(spec: Dict[str, Any]) -> str:
         y, m, d = 2025, 1, 1
 
     schedule = spec.get("schedule") or "@daily"
+    start_hour = 0
+    start_minute = 0
+    if schedule == "@once" and spec.get("start_time"):
+        try:
+            hh, mm = spec["start_time"].split(":")
+            start_hour = int(hh)
+            start_minute = int(mm)
+        except Exception:
+            # si hay formato inválido, cae a las 00:00
+            start_hour = 0
+            start_minute = 0
     catchup = bool(spec.get("catchup", False))
     tags = spec.get("tags") or []
     timezone = (spec.get("timezone") or "UTC").replace('"', '\\"')
@@ -469,6 +480,13 @@ def build_dag_code(spec: Dict[str, Any]) -> str:
     if all_warns:
         warnings_block = "# WARNINGS:\n# " + "\n# ".join(all_warns) + "\n\n"
 
+        # start_date render según @once
+    start_date_render = (
+        f"datetime({y}, {m}, {d}, {start_hour}, {start_minute}, tzinfo=local_tz)"
+        if schedule == "@once"
+        else f"datetime({y}, {m}, {d}, tzinfo=local_tz)"
+    )
+
     # Código final
     code = f'''{warnings_block}{header}
 local_tz = pendulum.timezone("{timezone}")
@@ -482,7 +500,7 @@ default_args = {{
 {pydefs}with DAG(
     dag_id="{dag_id}",
     description="{description}",
-    start_date=datetime({y}, {m}, {d}, tzinfo=local_tz),
+    start_date={start_date_render},
     schedule="{schedule}",
     catchup={str(catchup)},
     default_args=default_args,

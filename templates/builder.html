@@ -35,7 +35,7 @@
 
 {% block content %}
 <div class="card" style="padding:0;">
-  <!-- Tabs header -->
+  <!-- Tabs -->
   <div role="tablist" aria-label="Secciones" class="tabs-header">
     <button role="tab" class="tab" data-tab="general" aria-selected="true">General</button>
     <button role="tab" class="tab" data-tab="schedule">Scheduling</button>
@@ -43,12 +43,12 @@
     <button role="tab" class="tab" data-tab="deps">Dependencies</button>
   </div>
 
-  <!-- Tabs content -->
   <div class="tabpanes" style="padding:12px;">
     <!-- GENERAL -->
     <section id="pane-general" role="tabpanel">
       <div class="section-card">
         <h3 style="margin-top:0;">Datos generales</h3>
+
         <div class="form-grid-2">
           <div>
             <label>DAG ID</label>
@@ -109,85 +109,132 @@
           </div>
 
           <div>
-            <label>Schedule (presets o custom)</label>
-            <!-- ÚNICO CONTROL -->
-            <select id="schedule_main"></select>
-
-            <!-- Visible sólo si elige custom -->
-            <div id="cron_custom_wrap" style="margin-top:6px; display:none;">
-              <label>Cron (min hora día mes dow)</label>
-              <input id="custom_cron" type="text" placeholder="0 17 * * *">
-            </div>
-
-            <div class="muted-note">Usa un preset (@hourly, @daily, …) o cron libre con “custom”.</div>
-          </div>
-        </div>
-
-        <p class="muted-note" style="margin-top:12px;">
-          Nota: Airflow 3.1 utiliza <code>schedule=</code> (no <code>schedule_interval</code>).
-        </p>
-      </div>
-
-      <div class="card" style="margin-top:12px;">
-        <div class="grid">
-          <div class="span-3">
-            <label>Modo</label>
-            <select id="sched_mode">
-              <option value="daily">Daily (a una hora)</option>
-              <option value="hourly">Hourly (dentro de ventana)</option>
-              <option value="every_n">Every N minutes (ventana)</option>
-              <option value="none">—</option>
+            <label>Schedule</label>
+            <select id="schedule_kind">
+              <option value="@once">@once (una sola vez)</option>
+              <option value="@hourly">@hourly</option>
+              <option value="@daily">@daily</option>
+              <option value="@weekly">@weekly</option>
+              <option value="@monthly">@monthly</option>
+              <option value="@yearly">@yearly</option>
             </select>
-          </div>
-          <div class="span-3">
-            <label>Timezone</label>
-            <input id="sched_tz" type="text" value="America/Santiago">
-          </div>
-
-          <!-- DAILY -->
-          <div class="span-2 only-daily">
-            <label>Hora</label>
-            <input id="daily_hh" type="number" min="0" max="23" value="17">
-          </div>
-          <div class="span-2 only-daily">
-            <label>Minuto</label>
-            <input id="daily_mm" type="number" min="0" max="59" value="0">
-          </div>
-
-          <!-- HOURLY -->
-          <div class="span-2 only-hourly">
-            <label>Minuto de la hora</label>
-            <input id="hourly_mm" type="number" min="0" max="59" value="0">
-          </div>
-          <div class="span-2 only-hourly">
-            <label>Desde hora</label>
-            <input id="hourly_from" type="number" min="0" max="23" value="9">
-          </div>
-          <div class="span-2 only-hourly">
-            <label>Hasta hora</label>
-            <input id="hourly_to" type="number" min="0" max="23" value="21">
-          </div>
-
-          <!-- EVERY N -->
-          <div class="span-2 only-every_n">
-            <label>N minutos</label>
-            <input id="n_minutes" type="number" min="1" max="59" value="30">
-          </div>
-          <div class="span-2 only-every_n">
-            <label>Desde hora</label>
-            <input id="n_from" type="number" min="0" max="23" value="9">
-          </div>
-          <div class="span-2 only-every_n">
-            <label>Hasta hora</label>
-            <input id="n_to" type="number" min="0" max="23" value="21">
+            <div class="muted-note">Airflow 3.1 usa <code>schedule=</code> (no <code>schedule_interval</code>).</div>
           </div>
         </div>
 
-        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-          <button id="btn_build_cron" class="button">Generar cron</button>
-          <code id="cron_preview" style="padding:4px 8px;border:1px solid var(--border);border-radius:8px;">—</code>
-          <button id="btn_preview_runs" class="button ghost">Ver próximos 5</button>
-          <span id="runs_preview" class="muted"></span>
+        <!-- Campos específicos -->
+        <div id="sched_fields" style="margin-top:12px;">
+          <!-- ONCE -->
+          <div class="form-grid-3 only-once">
+            <div>
+              <label>Hora (@once)</label>
+              <input id="once_hh" type="number" min="0" max="23" value="9">
+            </div>
+            <div>
+              <label>Minuto (@once)</label>
+              <input id="once_mm" type="number" min="0" max="59" value="0">
+            </div>
+          </div>
+
+          <!-- Hora base (daily/weekly/monthly/yearly) -->
+          <div class="form-grid-3 only-daily only-weekly only-monthly only-yearly" style="margin-top:8px;">
+            <div>
+              <label>Hora</label>
+              <input id="t_hh" type="number" min="0" max="23" value="9">
+            </div>
+            <div>
+              <label>Minuto</label>
+              <input id="t_mm" type="number" min="0" max="59" value="0">
+            </div>
+          </div>
+
+          <!-- Weekly -->
+          <div class="form-grid-3 only-weekly" style="margin-top:8px;">
+            <div>
+              <label>Día de semana</label>
+              <select id="w_dow">
+                <option value="1">Lunes</option><option value="2">Martes</option>
+                <option value="3">Miércoles</option><option value="4">Jueves</option>
+                <option value="5">Viernes</option><option value="6">Sábado</option>
+                <option value="0">Domingo</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Monthly -->
+          <div class="form-grid-3 only-monthly" style="margin-top:8px;">
+            <div>
+              <label>Día del mes</label>
+              <input id="m_dom" type="number" min="1" max="31" value="1">
+            </div>
+          </div>
+
+          <!-- Yearly -->
+          <div class="form-grid-3 only-yearly" style="margin-top:8px;">
+            <div>
+              <label>Mes</label>
+              <select id="y_mon">
+                <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option>
+                <option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option>
+                <option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option>
+                <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+              </select>
+            </div>
+            <div>
+              <label>Día</label>
+              <input id="y_dom" type="number" min="1" max="31" value="1">
+            </div>
+          </div>
+
+          <!-- Hourly -->
+          <div class="form-grid-3 only-hourly" style="margin-top:8px;">
+            <div>
+              <label>Minuto de la hora</label>
+              <input id="h_mm" type="number" min="0" max="59" value="0">
+            </div>
+            <div>
+              <label>Hora inicio (no cíclico)</label>
+              <input id="h_start" type="number" min="0" max="23" value="">
+            </div>
+          </div>
+
+          <!-- CÍCLICO -->
+          <div class="section-card" style="margin-top:12px;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="cyclic_on" type="checkbox">
+              <label for="cyclic_on"><b>Cíclico dentro de ventana (*/N minutos)</b></label>
+            </div>
+            <div class="form-grid-3" style="margin-top:8px;">
+              <div>
+                <label>Cada N minutos</label>
+                <input id="cyclic_n" type="number" min="1" max="59" value="15">
+              </div>
+              <div>
+                <label>Desde hora</label>
+                <input id="cyc_from" type="number" min="0" max="23" value="9">
+              </div>
+              <div>
+                <label>Hasta hora</label>
+                <input id="cyc_to" type="number" min="0" max="23" value="18">
+              </div>
+            </div>
+            <div class="muted-note">Si no está activo “Cíclico”, se usa la hora/minuto definidos arriba.</div>
+          </div>
+
+          <!-- TZ + acciones -->
+          <div class="form-grid-3" style="margin-top:12px;">
+            <div>
+              <label>Timezone</label>
+              <input id="sched_tz" type="text" value="America/Santiago">
+            </div>
+          </div>
+
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+            <button id="btn_build_cron" class="button">Generar cron</button>
+            <code id="cron_preview" style="padding:4px 8px;border:1px solid var(--border);border-radius:8px;">—</code>
+            <button id="btn_preview_runs" class="button ghost">Ver próximos 5</button>
+            <span id="runs_preview" class="muted"></span>
+          </div>
         </div>
       </div>
     </section>
@@ -294,118 +341,108 @@ const OP_TYPES = [
   ["spark","SparkSubmitOperator"], ["databricks","DatabricksSubmitRunOperator"]
 ];
 
-const SCHEDULE_PRESETS = [
-  "@once","@hourly","@daily","@weekly","@monthly","@yearly",
-  "*/5 * * * *","0 * * * *","0 3 * * *","0 0 * * 1","0 0 1 * *",
-  "custom"
-];
-
 function el(tag, attrs={}, html=""){ const e=document.createElement(tag); Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v)); if(html) e.innerHTML=html; return e; }
 let tcount = 0;
 function normId(v){ let s=String(v||"").trim().replace(/\s+/g,"_"); s=s.replace(/[^A-Za-z0-9_]/g,"_"); if(!/^[A-Za-z_]/.test(s)) s="t_"+s; return s||"t_task"; }
 function ensureUniqueTaskIds(tasks){ const seen=new Map(); return tasks.map(t=>{ const base=normId(t.task_id); let id=base; if(seen.has(base)){ const n=seen.get(base)+1; seen.set(base,n); id=`${base}_${n}` } else { seen.set(base,1) } return {...t, task_id:id}; }); }
 
-/* ===== Scheduling UI ===== */
+/* ===== Scheduling (único control) ===== */
 window.builderState = window.builderState || { schedule: "@daily", timezone: "America/Santiago" };
 
-(function initScheduleUI(){
-  const sel = document.getElementById('schedule_main');
-  const wrap = document.getElementById('cron_custom_wrap');
-  const cron = document.getElementById('custom_cron');
+function showSchedGroups(kind){
+  const all = ['only-once','only-hourly','only-daily','only-weekly','only-monthly','only-yearly'];
+  all.forEach(cls => document.querySelectorAll('.'+cls).forEach(el => el.style.display='none'));
+  if (kind==='@once')    document.querySelectorAll('.only-once').forEach(el=>el.style.display='block');
+  if (kind==='@hourly')  document.querySelectorAll('.only-hourly').forEach(el=>el.style.display='block');
+  if (kind==='@daily')   document.querySelectorAll('.only-daily').forEach(el=>el.style.display='block');
+  if (kind==='@weekly')  document.querySelectorAll('.only-weekly,.only-daily').forEach(el=>el.style.display='block');
+  if (kind==='@monthly') document.querySelectorAll('.only-monthly,.only-daily').forEach(el=>el.style.display='block');
+  if (kind==='@yearly')  document.querySelectorAll('.only-yearly,.only-daily').forEach(el=>el.style.display='block');
+}
 
-  SCHEDULE_PRESETS.forEach(v => sel.appendChild(new Option(v, v)));
-  sel.value = window.builderState.schedule && SCHEDULE_PRESETS.includes(window.builderState.schedule)
-              ? window.builderState.schedule : "custom";
+function buildCronFromUI2(){
+  const kind = document.getElementById('schedule_kind').value;
+  const tz   = (document.getElementById('sched_tz').value || 'UTC').trim();
+  window.builderState.timezone = tz;
 
-  wrap.style.display = (sel.value === "custom") ? "block" : "none";
-  if (sel.value === "custom" && !cron.value) cron.value = window.builderState.schedule || "0 17 * * *";
+  // Para @once no hay cron: devolvemos @once y usamos hora en start_time
+  if (kind === '@once') return '@once';
 
-  sel.addEventListener('change', () => {
-    if (sel.value === "custom") {
-      wrap.style.display = "block"; if (!cron.value) cron.value = "0 17 * * *";
-      window.builderState.schedule = cron.value.trim();
-    } else {
-      wrap.style.display = "none";
-      window.builderState.schedule = sel.value;
+  const HH = +document.getElementById('t_hh')?.value || 0;
+  const MM = +document.getElementById('t_mm')?.value || 0;
+
+  const CY  = !!document.getElementById('cyclic_on').checked;
+  const N   = +document.getElementById('cyclic_n').value || 15;
+  const F   = +document.getElementById('cyc_from').value || 0;
+  const T   = +document.getElementById('cyc_to').value   || 23;
+
+  if (kind === '@hourly'){
+    if (CY) return `*/${N} ${F}-${T} * * *`;
+    const hmm   = +document.getElementById('h_mm').value || 0;
+    const hstart = document.getElementById('h_start').value;
+    if (hstart !== "" && hstart !== undefined && hstart !== null){
+      const HS = Math.min(23, Math.max(0, +hstart));
+      return `${hmm} ${HS}-23 * * *`;
     }
-    document.getElementById('cron_preview').textContent = window.builderState.schedule || "—";
-  });
-
-  cron.addEventListener('input', () => {
-    window.builderState.schedule = cron.value.trim();
-    document.getElementById('cron_preview').textContent = window.builderState.schedule || "—";
-  });
-
-  const tz = document.getElementById('sched_tz');
-  if (tz) {
-    tz.value = window.builderState.timezone || tz.value || "UTC";
-    tz.addEventListener('input', () => window.builderState.timezone = tz.value.trim() || "UTC");
+    return `${hmm} * * * *`;
   }
+  if (kind === '@daily'){
+    if (CY) return `*/${N} ${F}-${T} * * *`;
+    return `${MM} ${HH} * * *`;
+  }
+  if (kind === '@weekly'){
+    const DOW = document.getElementById('w_dow').value;
+    if (CY) return `*/${N} ${F}-${T} * * ${DOW}`;
+    return `${MM} ${HH} * * ${DOW}`;
+  }
+  if (kind === '@monthly'){
+    const DOM = +document.getElementById('m_dom').value || 1;
+    if (CY) return `*/${N} ${F}-${T} ${DOM} * *`;
+    return `${MM} ${HH} ${DOM} * *`;
+  }
+  if (kind === '@yearly'){
+    const MON = +document.getElementById('y_mon').value || 1;
+    const DOM = +document.getElementById('y_dom').value || 1;
+    if (CY) return `*/${N} ${F}-${T} ${DOM} ${MON} *`;
+    return `${MM} ${HH} ${DOM} ${MON} *`;
+  }
+  return "@daily";
+}
+
+(function initSched2(){
+  const kindSel = document.getElementById('schedule_kind');
+  const tz      = document.getElementById('sched_tz');
+
+  const initial = window.builderState.schedule || '@daily';
+  if (['@once','@hourly','@daily','@weekly','@monthly','@yearly'].includes(initial)){
+    kindSel.value = initial;
+  } else { kindSel.value = '@daily'; }
+  tz.value = window.builderState.timezone || tz.value || 'UTC';
+  showSchedGroups(kindSel.value);
+  kindSel.addEventListener('change', ()=> showSchedGroups(kindSel.value));
+
+  document.getElementById('btn_build_cron').addEventListener('click', ()=>{
+    const cron = buildCronFromUI2();
+    window.builderState.schedule = cron;
+    document.getElementById('cron_preview').textContent = cron || '—';
+  });
+
+  document.getElementById('btn_preview_runs').addEventListener('click', async ()=>{
+    const cron = window.builderState.schedule || buildCronFromUI2();
+    const timezone = window.builderState.timezone || 'UTC';
+    try {
+      const r = await fetch('/api/schedule/preview', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ cron, timezone, count: 5 }),
+      });
+      const data = await r.json().catch(()=>({error:'resp inválida'}));
+      document.getElementById('runs_preview').textContent =
+        Array.isArray(data.next_runs) ? data.next_runs.join('  ·  ') : (data.error || '—');
+    } catch { document.getElementById('runs_preview').textContent = 'Error de red'; }
+  });
 })();
-
-function showModeGroups(){
-  const m = document.getElementById('sched_mode').value;
-  ['only-daily','only-hourly','only-every_n'].forEach(cls =>
-    document.querySelectorAll('.'+cls).forEach(el => el.style.display='none')
-  );
-  if (m==='daily')   document.querySelectorAll('.only-daily').forEach(el=>el.style.display='block');
-  if (m==='hourly')  document.querySelectorAll('.only-hourly').forEach(el=>el.style.display='block');
-  if (m==='every_n') document.querySelectorAll('.only-every_n').forEach(el=>el.style.display='block');
-}
-document.getElementById('sched_mode').addEventListener('change', showModeGroups);
-showModeGroups();
-
-function buildCronFromUI(){
-  const m = document.getElementById('sched_mode').value;
-  if (m==='daily'){
-    const hh = +document.getElementById('daily_hh').value || 17;
-    const mm = +document.getElementById('daily_mm').value || 0;
-    return `${mm} ${hh} * * *`;
-  }
-  if (m==='hourly'){
-    const mm = +document.getElementById('hourly_mm').value || 0;
-    const from = +document.getElementById('hourly_from').value || 9;
-    const to   = +document.getElementById('hourly_to').value   || 21;
-    return `${mm} ${from}-${to} * * *`;
-  }
-  if (m==='every_n'){
-    const n   = +document.getElementById('n_minutes').value || 30;
-    const from = +document.getElementById('n_from').value   || 9;
-    const to   = +document.getElementById('n_to').value     || 21;
-    return `*/${n} ${from}-${to} * * *`;
-  }
-  return window.builderState.schedule || "@daily";
-}
-
-document.getElementById('btn_build_cron').addEventListener('click', () => {
-  const cron = buildCronFromUI();
-  const sel  = document.getElementById('schedule_main');
-  const wrap = document.getElementById('cron_custom_wrap');
-  const input= document.getElementById('custom_cron');
-
-  sel.value = "custom";
-  wrap.style.display = "block";
-  input.value = cron;
-
-  window.builderState.schedule = cron;
-  document.getElementById('cron_preview').textContent = cron || '—';
-});
-
-document.getElementById('btn_preview_runs').addEventListener('click', async ()=>{
-  const span = document.getElementById('runs_preview');
-  const cron = window.builderState.schedule || "@daily";
-  const tz = window.builderState.timezone || "UTC";
-  try {
-    const r = await fetch('/api/schedule/preview', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ cron, timezone: tz, count: 5 })
-    });
-    const data = await r.json().catch(()=>({error:'resp inválida'}));
-    span.textContent = Array.isArray(data.next_runs) ? data.next_runs.join('  ·  ') : (data.error || '—');
-  } catch { span.textContent = 'Error de red'; }
-});
-
-/* ===== Tasks UI ===== */
+/* ===== Tasks / Deps / Graph ===== */
+/* ===== Tasks ===== */
 function taskIdOptions(){
   return Array.from(document.querySelectorAll('#tasks input[data-k="task_id"]'))
     .map(i=>normId(i.value)).filter(Boolean)
@@ -559,7 +596,7 @@ function addExternalDep(){
   wrap.appendChild(el("label",{},"timeout (s)"));
   wrap.appendChild(el("input",{"data-k":"timeout",type:"number",value:"3600"}));
   wrap.appendChild(el("label",{},"Conectar a (downstream local)"));
-  wrap.appendChild(makeDownstreamSelect());
+  wrap.appendChild(makeDownstreamSelect()); /* <- fix sin paréntesis extra */
   const del = el("button",{},"Eliminar");
   del.onclick = () => { wrap.remove(); updateGraph(); };
   wrap.appendChild(el("div",{style:"margin-top:6px;"})).appendChild(del);
@@ -596,11 +633,13 @@ function collect(){
   });
   tasks = ensureUniqueTaskIds(tasks);
 
+    // --- Dependencias internas ---
   const deps = qAll(document, "#deps > .section-card").map(card => {
     const [upSel, downSel] = qAll(card, 'select[data-k="_sel"]');
     return { upstream: upSel?.value || "", downstream: downSel?.value || "" };
   });
 
+    // --- Dependencias externas -> ExternalTaskSensor + edge ---
   const extDeps = qAll(document, "#extdeps > .section-card").map(card => {
     const ext = {}; qAll(card, "[data-k]").forEach(inp => ext[inp.getAttribute("data-k")] = inp.value); return ext;
   });
@@ -614,6 +653,15 @@ function collect(){
     if(e.downstream){ deps.push({ upstream: ets_id, downstream: e.downstream }); }
   });
 
+    // --- Hora específica para @once (NO es cron) ---
+  const start_time_once = (() => {
+    const hh = document.getElementById('once_hh')?.value ?? '';
+    const mm = document.getElementById('once_mm')?.value ?? '';
+    return (hh !== '' && mm !== '')
+      ? `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`
+      : '';
+  })();
+
   return {
     dag_id: document.getElementById("dag_id")?.value || "",
     description: document.getElementById("description")?.value || "",
@@ -625,6 +673,7 @@ function collect(){
     start_date: document.getElementById("start_date")?.value || "",
     schedule: (window.builderState?.schedule) || "@daily",
     timezone: (window.builderState?.timezone) || "UTC",
+    start_time: start_time_once,
     catchup: !!document.getElementById("catchup")?.checked,
     tags: (document.getElementById("tags")?.value || "").split(",").map(s => s.trim()).filter(Boolean),
     tasks, dependencies: deps
