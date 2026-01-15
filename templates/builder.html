@@ -29,6 +29,21 @@
                 radial-gradient(var(--border) 1px, transparent 0) 0 0/16px 16px,
                 radial-gradient(var(--border) 1px, transparent 0) 8px 8px/16px 16px;
               margin-top:8px; }
+  .form-grid-4 { display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:12px; }
+  .preview-box{
+    white-space: pre-wrap;        /* respeta saltos y permite wrap */
+    overflow-wrap: anywhere;      /* corta palabras largas */
+    word-break: break-word;
+    max-height: 160px;            /* ajusta a gusto */
+    overflow: auto;               /* scroll si se pasa */
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    padding: 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+
+  }
 </style>
 <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
 {% endblock %}
@@ -112,6 +127,7 @@
             <label>Schedule</label>
             <select id="schedule_kind">
               <option value="@once">@once (una sola vez)</option>
+              <option value="@times">@times (horarios específicos)</option>
               <option value="@hourly">@hourly</option>
               <option value="@daily">@daily</option>
               <option value="@weekly">@weekly</option>
@@ -124,7 +140,47 @@
 
         <!-- Campos específicos -->
         <div id="sched_fields" style="margin-top:12px;">
-          <!-- ONCE -->
+
+          <!-- TIMES (horarios específicos) -->
+          <div class="only-times" style="display:none; margin-top:8px;">
+            <div class="section-card" style="padding:12px;">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <b>Horarios específicos</b>
+                <span class="muted-note">Genera 1 o más cron (agrupa por minuto). Si hay más de uno, se envía como <code>MULTI|...</code>.</span>
+              </div>
+
+              <div style="margin-top:10px;">
+                <label>Días de semana</label>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                  <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" name="times_dow" value="1" checked> Lun</label>
+                  <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" name="times_dow" value="2" checked> Mar</label>
+                  <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" name="times_dow" value="3" checked> Mié</label>
+                  <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" name="times_dow" value="4" checked> Jue</label>
+                  <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" name="times_dow" value="5" checked> Vie</label>
+                  <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" name="times_dow" value="6"> Sáb</label>
+                  <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" name="times_dow" value="0"> Dom</label>
+
+                  <span style="flex:1;"></span>
+                  <button id="times_btn_lv" class="button ghost" type="button">L-V</button>
+                  <button id="times_btn_all" class="button ghost" type="button">Todos</button>
+                  <button id="times_btn_none" class="button ghost" type="button">Limpiar</button>
+                </div>
+              </div>
+
+              <div style="margin-top:10px;">
+                <label>Horarios (HH:MM) — separados por coma / espacio / salto de línea</label>
+                <input id="times_list" placeholder="10:00, 11:00, 14:30, 17:00  (también acepta 1000, 1430)"/>
+                <div class="muted-note">Ej: <code>1000,1100,1430,1700</code> o <code>10:00 11:00 14:30 17:00</code></div>
+              </div>
+
+              <details style="margin-top:10px;">
+                <summary>Ver cron(s) generados</summary>
+                <pre id="times_crons" style="margin-top:8px; white-space:pre-wrap;">—</pre>
+              </details>
+            </div>
+          </div>
+
+<!-- ONCE -->
           <div class="form-grid-3 only-once">
             <div>
               <label>Hora (@once)</label>
@@ -199,27 +255,47 @@
           </div>
 
           <!-- CÍCLICO -->
-          <div class="section-card" style="margin-top:12px;">
-            <div style="display:flex;gap:8px;align-items:center;">
-              <input id="cyclic_on" type="checkbox">
-              <label for="cyclic_on"><b>Cíclico dentro de ventana (*/N minutos)</b></label>
-            </div>
-            <div class="form-grid-3" style="margin-top:8px;">
-              <div>
-                <label>Cada N minutos</label>
-                <input id="cyclic_n" type="number" min="1" max="59" value="15">
-              </div>
-              <div>
-                <label>Desde hora</label>
-                <input id="cyc_from" type="number" min="0" max="23" value="9">
-              </div>
-              <div>
-                <label>Hasta hora</label>
-                <input id="cyc_to" type="number" min="0" max="23" value="18">
-              </div>
-            </div>
-            <div class="muted-note">Si no está activo “Cíclico”, se usa la hora/minuto definidos arriba.</div>
-          </div>
+<div class="section-card only-cyclic" style="margin-top:12px;">
+  <div style="display:flex;gap:8px;align-items:center;">
+    <input id="cyclic_on" type="checkbox">
+    <label for="cyclic_on"><b>Cíclico dentro de ventana (cada N minutos/horas)</b></label>
+  </div>
+
+  <div class="form-grid-4" style="margin-top:8px;">
+    <div>
+      <label>Cada N</label>
+      <input id="cyclic_n" type="number" min="1" max="59" value="15">
+    </div>
+
+    <div>
+      <label>Unidad</label>
+      <select id="cyclic_unit">
+        <option value="minutes" selected>minutos</option>
+        <option value="hours">horas</option>
+      </select>
+    </div>
+
+    <div id="cyclic_at_mm_wrap" style="display:none;">
+      <label>En minuto (solo si unidad=horas)</label>
+      <input id="cyclic_at_mm" type="number" min="0" max="59" value="0">
+    </div>
+
+    <div>
+      <label>Desde hora</label>
+      <input id="cyc_from" type="number" min="0" max="23" value="9">
+    </div>
+
+    <div>
+      <label>Hasta hora</label>
+      <input id="cyc_to" type="number" min="0" max="23" value="18">
+    </div>
+  </div>
+
+  <div class="muted-note">
+    Si está activo “Cíclico”, se ignoran los campos de hora/minuto de arriba y se genera un cron por intervalo.
+  </div>
+</div>
+
 
           <!-- TZ + acciones -->
           <div class="form-grid-3" style="margin-top:12px;">
@@ -297,7 +373,7 @@
     <button class="button secondary" id="btn_show_code">Código</button>
     <button class="button secondary" id="btn_show_val">Validación</button>
   </div>
-  <pre id="out_code">—</pre>
+  <pre id="out_code" class="preview-box">—</pre>
   <pre id="out_val" style="display:none">—</pre>
 </div>
 {% endblock %}
@@ -314,6 +390,7 @@
 
 {% block scripts %}
 <script>
+window.addEventListener('DOMContentLoaded', () => {
 /* ===== Tabs ===== */
 (function(){
   const KEY='builder:lastTab';
@@ -350,14 +427,19 @@ function ensureUniqueTaskIds(tasks){ const seen=new Map(); return tasks.map(t=>{
 window.builderState = window.builderState || { schedule: "@daily", timezone: "America/Santiago" };
 
 function showSchedGroups(kind){
-  const all = ['only-once','only-hourly','only-daily','only-weekly','only-monthly','only-yearly'];
+  const all = ['only-once','only-times','only-hourly','only-daily','only-weekly','only-monthly','only-yearly'];
   all.forEach(cls => document.querySelectorAll('.'+cls).forEach(el => el.style.display='none'));
   if (kind==='@once')    document.querySelectorAll('.only-once').forEach(el=>el.style.display='block');
+  if (kind==='@times')   document.querySelectorAll('.only-times').forEach(el=>el.style.display='block');
   if (kind==='@hourly')  document.querySelectorAll('.only-hourly').forEach(el=>el.style.display='block');
   if (kind==='@daily')   document.querySelectorAll('.only-daily').forEach(el=>el.style.display='block');
   if (kind==='@weekly')  document.querySelectorAll('.only-weekly,.only-daily').forEach(el=>el.style.display='block');
   if (kind==='@monthly') document.querySelectorAll('.only-monthly,.only-daily').forEach(el=>el.style.display='block');
   if (kind==='@yearly')  document.querySelectorAll('.only-yearly,.only-daily').forEach(el=>el.style.display='block');
+  // Cíclico solo aplica a hourly/daily/weekly/monthly/yearly
+  document.querySelectorAll('.only-cyclic').forEach(el=>{
+    el.style.display = (kind==='@times' || kind==='@once') ? 'none' : 'block';
+  });
 }
 
 function buildCronFromUI2(){
@@ -368,16 +450,137 @@ function buildCronFromUI2(){
   // Para @once no hay cron: devolvemos @once y usamos hora en start_time
   if (kind === '@once') return '@once';
 
+  // Horarios específicos: genera 1 o más cron (agrupados por minuto)
+  if (kind === '@times'){
+    const clamp = (x, min, max) => Math.min(max, Math.max(min, x));
+
+    const dows = Array.from(document.querySelectorAll('input[name="times_dow"]:checked'))
+      .map(cb => cb.value)
+      .filter(v => v !== undefined && v !== null && v !== "");
+
+    // Si no marca nada, por defecto L-V
+    const dowsEff = (dows.length ? dows : ["1","2","3","4","5"]);
+
+    // Normaliza DOW a campo cron
+    const uniq = [...new Set(dowsEff.map(String))];
+    const asNums = uniq.map(n => parseInt(n,10)).filter(n => !Number.isNaN(n)).sort((a,b)=>a-b);
+
+    let dowField = asNums.join(',');
+    // compactar L-V
+    if (asNums.length === 5 && asNums.join(',') === '1,2,3,4,5') dowField = '1-5';
+    // compactar todos
+    if (asNums.length === 7 && asNums.join(',') === '0,1,2,3,4,5,6') dowField = '*';
+
+    const raw = (document.getElementById('times_list')?.value || '').trim();
+    const tokens = raw
+      .replace(/[;|]+/g, ' ')
+      .split(/[\s,]+/g)
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const times = [];
+    for(const t of tokens){
+      let hh=null, mm=null;
+      if(t.includes(':')){
+        const [h,m] = t.split(':');
+        hh = parseInt(h,10); mm = parseInt(m,10);
+      }else if(/^\d{4}$/.test(t)){
+        hh = parseInt(t.slice(0,2),10); mm = parseInt(t.slice(2),10);
+      }else if(/^\d{3}$/.test(t)){
+        hh = parseInt(t.slice(0,1),10); mm = parseInt(t.slice(1),10);
+      }else if(/^\d{1,2}$/.test(t)){
+        // "10" => 10:00
+        hh = parseInt(t,10); mm = 0;
+      }else{
+        continue;
+      }
+      hh = clamp(hh,0,23); mm = clamp(mm,0,59);
+      times.push({hh,mm});
+    }
+
+    // dedupe
+    const key = (o)=> `${String(o.hh).padStart(2,'0')}:${String(o.mm).padStart(2,'0')}`;
+    const uniqTimes = [...new Map(times.map(o=>[key(o),o])).values()]
+      .sort((a,b)=> (a.hh-b.hh) || (a.mm-b.mm));
+
+    // fallback si no hay horarios
+    if(!uniqTimes.length){
+      const cr = `0 9 * * ${dowField}`;
+      const pre = document.getElementById('times_crons');
+      if(pre) pre.textContent = cr;
+      return cr;
+    }
+
+    // agrupar por minuto
+    const byMin = new Map();
+    for(const t of uniqTimes){
+      const mmKey = t.mm;
+      if(!byMin.has(mmKey)) byMin.set(mmKey, []);
+      byMin.get(mmKey).push(t.hh);
+    }
+
+    const crons = [];
+    [...byMin.entries()].sort((a,b)=>a[0]-b[0]).forEach(([mmVal, hours])=>{
+      const hs = [...new Set(hours)].sort((a,b)=>a-b);
+      const hhField = hs.join(',');
+      crons.push(`${mmVal} ${hhField} * * ${dowField}`);
+    });
+
+    const pre = document.getElementById('times_crons');
+    if(pre) pre.textContent = crons.join('\n');
+
+    if(crons.length === 1) return crons[0];
+    return 'MULTI|' + crons.join('||');
+  }
+
+
   const HH = +document.getElementById('t_hh')?.value || 0;
   const MM = +document.getElementById('t_mm')?.value || 0;
 
-  const CY  = !!document.getElementById('cyclic_on').checked;
-  const N   = +document.getElementById('cyclic_n').value || 15;
-  const F   = +document.getElementById('cyc_from').value || 0;
-  const T   = +document.getElementById('cyc_to').value   || 23;
+  const CY   = !!document.getElementById('cyclic_on').checked;
+  const unit = (document.getElementById('cyclic_unit')?.value || 'minutes'); // minutes | hours
+
+  const clamp = (x, min, max) => Math.min(max, Math.max(min, x));
+  const rawN  = +document.getElementById('cyclic_n')?.value || (unit === 'hours' ? 2 : 15);
+
+  const Nmax  = (unit === 'hours') ? 23 : 59;
+  const N     = clamp(rawN, 1, Nmax);
+
+  const F0    = clamp(+document.getElementById('cyc_from')?.value || 0, 0, 23);
+  const T0    = clamp(+document.getElementById('cyc_to')?.value   || 23, 0, 23);
+  const F     = Math.min(F0, T0);
+  const T     = Math.max(F0, T0);
+
+  const cycMM = clamp(+document.getElementById('cyclic_at_mm')?.value || 0, 0, 59);
+
+  // helpers para cron cíclico
+  const cyclicDaily = () => {
+    if (unit === 'minutes') return `*/${N} ${F}-${T} * * *`;
+    // horas: minuto fijo, hora con step
+    if (F === 0 && T === 23) return `${cycMM} */${N} * * *`;
+    return `${cycMM} ${F}-${T}/${N} * * *`;
+  };
+
+  const cyclicWeekly = (DOW) => {
+    if (unit === 'minutes') return `*/${N} ${F}-${T} * * ${DOW}`;
+    if (F === 0 && T === 23) return `${cycMM} */${N} * * ${DOW}`;
+    return `${cycMM} ${F}-${T}/${N} * * ${DOW}`;
+  };
+
+  const cyclicMonthly = (DOM) => {
+    if (unit === 'minutes') return `*/${N} ${F}-${T} ${DOM} * *`;
+    if (F === 0 && T === 23) return `${cycMM} */${N} ${DOM} * *`;
+    return `${cycMM} ${F}-${T}/${N} ${DOM} * *`;
+  };
+
+  const cyclicYearly = (DOM, MON) => {
+    if (unit === 'minutes') return `*/${N} ${F}-${T} ${DOM} ${MON} *`;
+    if (F === 0 && T === 23) return `${cycMM} */${N} ${DOM} ${MON} *`;
+    return `${cycMM} ${F}-${T}/${N} ${DOM} ${MON} *`;
+  };
 
   if (kind === '@hourly'){
-    if (CY) return `*/${N} ${F}-${T} * * *`;
+    if (CY) return cyclicDaily(); // permite también ciclos en horas
     const hmm   = +document.getElementById('h_mm').value || 0;
     const hstart = document.getElementById('h_start').value;
     if (hstart !== "" && hstart !== undefined && hstart !== null){
@@ -387,25 +590,28 @@ function buildCronFromUI2(){
     return `${hmm} * * * *`;
   }
   if (kind === '@daily'){
-    if (CY) return `*/${N} ${F}-${T} * * *`;
+    if (CY) return cyclicDaily();
     return `${MM} ${HH} * * *`;
   }
-  if (kind === '@weekly'){
+    if (kind === '@weekly'){
     const DOW = document.getElementById('w_dow').value;
-    if (CY) return `*/${N} ${F}-${T} * * ${DOW}`;
+    if (CY) return cyclicWeekly(DOW);
     return `${MM} ${HH} * * ${DOW}`;
   }
-  if (kind === '@monthly'){
+
+    if (kind === '@monthly'){
     const DOM = +document.getElementById('m_dom').value || 1;
-    if (CY) return `*/${N} ${F}-${T} ${DOM} * *`;
+    if (CY) return cyclicMonthly(DOM);
     return `${MM} ${HH} ${DOM} * *`;
   }
-  if (kind === '@yearly'){
+
+    if (kind === '@yearly'){
     const MON = +document.getElementById('y_mon').value || 1;
     const DOM = +document.getElementById('y_dom').value || 1;
-    if (CY) return `*/${N} ${F}-${T} ${DOM} ${MON} *`;
+    if (CY) return cyclicYearly(DOM, MON);
     return `${MM} ${HH} ${DOM} ${MON} *`;
   }
+
   return "@daily";
 }
 
@@ -414,32 +620,140 @@ function buildCronFromUI2(){
   const tz      = document.getElementById('sched_tz');
 
   const initial = window.builderState.schedule || '@daily';
-  if (['@once','@hourly','@daily','@weekly','@monthly','@yearly'].includes(initial)){
+  if (['@once','@times','@hourly','@daily','@weekly','@monthly','@yearly'].includes(initial)){
     kindSel.value = initial;
   } else { kindSel.value = '@daily'; }
   tz.value = window.builderState.timezone || tz.value || 'UTC';
-  showSchedGroups(kindSel.value);
-  kindSel.addEventListener('change', ()=> showSchedGroups(kindSel.value));
 
-  document.getElementById('btn_build_cron').addEventListener('click', ()=>{
+  // Botones rápidos para @times
+  function setTimesDows(mode){
+    const cbs = Array.from(document.querySelectorAll('input[name="times_dow"]'));
+    if(!cbs.length) return;
+    if(mode==='lv'){
+      cbs.forEach(cb => cb.checked = ['1','2','3','4','5'].includes(cb.value));
+    } else if(mode==='all'){
+      cbs.forEach(cb => cb.checked = true);
+    } else if(mode==='none'){
+      cbs.forEach(cb => cb.checked = false);
+    }
+    if (typeof syncCronFromUI === 'function') syncCronFromUI();
+  }
+  document.getElementById('times_btn_lv')?.addEventListener('click', ()=> setTimesDows('lv'));
+  document.getElementById('times_btn_all')?.addEventListener('click', ()=> setTimesDows('all'));
+  document.getElementById('times_btn_none')?.addEventListener('click', ()=> setTimesDows('none'));
+  document.querySelectorAll('input[name="times_dow"]').forEach(cb=>{
+    cb.addEventListener('change', ()=>{ if (typeof syncCronFromUI === 'function') syncCronFromUI(); });
+  });
+
+  // Auto-sync al tocar cualquier campo de scheduling
+  const schedIds = [
+    'schedule_kind','sched_tz',
+    't_hh','t_mm','h_mm','h_start',
+    'w_dow','m_dom','y_mon','y_dom',
+    'cyclic_on','cyclic_n','cyclic_unit','cyclic_at_mm','cyc_from','cyc_to',
+    'once_hh','once_mm',
+    'times_list'
+  ];
+  schedIds.forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    const ev = (el.tagName === 'SELECT' || el.type === 'checkbox') ? 'change' : 'input';
+    el.addEventListener(ev, ()=>{ if (typeof syncCronFromUI === 'function') syncCronFromUI(); });
+    if(ev !== 'change') el.addEventListener('change', ()=>{ if (typeof syncCronFromUI === 'function') syncCronFromUI(); });
+  });
+  showSchedGroups(kindSel.value);
+
+  // Mantener builderState.schedule sincronizado con la UI (evita que el preview use el valor inicial "@daily")
+  function syncCronFromUI(){
     const cron = buildCronFromUI2();
     window.builderState.schedule = cron;
-    document.getElementById('cron_preview').textContent = cron || '—';
+    const cp = document.getElementById('cron_preview');
+    if(cp){
+      if(typeof cron === 'string' && cron.startsWith('MULTI|')){
+        const n = cron.slice(6).split('||').filter(Boolean).length;
+        cp.textContent = `MULTI (${n})`;
+        cp.title = cron;
+      }else{
+        cp.textContent = cron || '—';
+        cp.title = '';
+      }
+    }
+    return cron;
+  }
+
+  kindSel.addEventListener('change', ()=> { showSchedGroups(kindSel.value); syncCronFromUI(); });
+
+  document.getElementById('btn_build_cron').addEventListener('click', ()=>{
+    syncCronFromUI();
   });
 
   document.getElementById('btn_preview_runs').addEventListener('click', async ()=>{
     const cron = window.builderState.schedule || buildCronFromUI2();
     const timezone = window.builderState.timezone || 'UTC';
-    try {
+    async function previewOne(cr){
       const r = await fetch('/api/schedule/preview', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ cron, timezone, count: 5 }),
+        body: JSON.stringify({ cron: cr, timezone, count: 5 }),
       });
       const data = await r.json().catch(()=>({error:'resp inválida'}));
-      document.getElementById('runs_preview').textContent =
-        Array.isArray(data.next_runs) ? data.next_runs.join('  ·  ') : (data.error || '—');
-    } catch { document.getElementById('runs_preview').textContent = 'Error de red'; }
+      if(data.error) throw new Error(data.error);
+      return Array.isArray(data.next_runs) ? data.next_runs : [];
+    }
+
+    try {
+      // MULTI|cron1||cron2...
+      if(typeof cron === 'string' && cron.startsWith('MULTI|')){
+        const parts = cron.slice(6).split('||').map(s=>s.trim()).filter(Boolean);
+        const lists = await Promise.all(parts.map(p => previewOne(p)));
+        const merged = lists.flat().filter(Boolean);
+
+        // Ordenar (formato "YYYY-MM-DD HH:MM:SS" => orden lexicográfico funciona)
+        merged.sort();
+
+        // dedupe y tomar 5
+        const out = [];
+        const seen = new Set();
+        for(const dt of merged){
+          if(seen.has(dt)) continue;
+          seen.add(dt);
+          out.push(dt);
+          if(out.length >= 5) break;
+        }
+        document.getElementById('runs_preview').textContent = out.length ? out.join('  ·  ') : '—';
+        return;
+      }
+
+      const runs = await previewOne(cron);
+      document.getElementById('runs_preview').textContent = runs.length ? runs.join('  ·  ') : '—';
+    } catch (e) {
+      document.getElementById('runs_preview').textContent = 'Error: ' + (e?.message || '—');
+    }
   });
+
+    function toggleCyclicUnitFields(){
+    const unitSel = document.getElementById('cyclic_unit');
+    const wrap    = document.getElementById('cyclic_at_mm_wrap');
+    const nInput  = document.getElementById('cyclic_n');
+    if(!unitSel || !wrap || !nInput) return;
+
+    const unit = unitSel.value || 'minutes';
+    wrap.style.display = (unit === 'hours') ? 'block' : 'none';
+
+    // ajustar max según unidad
+    nInput.max = (unit === 'hours') ? '23' : '59';
+    const n = +nInput.value || 1;
+    if(unit === 'hours' && n > 23) nInput.value = 23;
+    if(unit === 'minutes' && n > 59) nInput.value = 59;
+
+    // recalcular cron al cambiar unidad/max
+    if (typeof syncCronFromUI === 'function') syncCronFromUI();
+  }
+
+  document.getElementById('cyclic_unit')?.addEventListener('change', ()=>{ toggleCyclicUnitFields(); if (typeof syncCronFromUI === 'function') syncCronFromUI(); });
+  toggleCyclicUnitFields();
+  if (typeof syncCronFromUI === 'function') syncCronFromUI();
+
+
 })();
 /* ===== Tasks / Deps / Graph ===== */
 /* ===== Tasks ===== */
@@ -507,18 +821,339 @@ function addTask(type){
   }
 
   if(type==="SSHOperator"){
-    const help = el("div",{class:"muted"}, "Ejecuta comando remoto por SSH (usa Connection ssh_conn_id).");
+    const help = el("div",{class:"muted-note"},
+      "Ejecuta en host remoto por SSH (usa Connection ssh_conn_id). " +
+      "Elige comando directo o script (ruta + archivo) y agrega parámetros (argumentos) si aplica."
+    );
     wrap.appendChild(help);
+
+    // Conexión
     wrap.appendChild(el("label",{},"ssh_conn_id"));
-    wrap.appendChild(el("input",{"data-k":"ssh_conn_id",placeholder:"ssh_default"}));
+    const sshConn = el("input",{"data-k":"ssh_conn_id",placeholder:"ssh_default"});
+    wrap.appendChild(sshConn);
+
     wrap.appendChild(el("label",{},"remote_host (opcional)"));
-    wrap.appendChild(el("input",{"data-k":"remote_host",placeholder:"host remoto si tu Conn no lo define"}));
+    const remoteHost = el("input",{"data-k":"remote_host",placeholder:"host remoto si tu Conn no lo define"});
+    wrap.appendChild(remoteHost);
+
+    // Tipo de ejecución (solo UI; NO va a spec)
+    wrap.appendChild(el("label",{},"tipo de ejecución"));
+    const modeSel = el("select",{"data-ui":"ssh_mode"});
+    modeSel.innerHTML = '<option value="command" selected>comando</option><option value="script">script</option>';
+    wrap.appendChild(modeSel);
+
+    // Bloque script (solo UI)
+    const scriptBox = el("div",{style:"margin-top:8px; padding:12px; border:1px dashed var(--border); border-radius:12px; display:none;"});
+    scriptBox.appendChild(el("div",{class:"muted-note"},"Si eliges script: indica ruta + script. El command se autogenera y se guarda en el campo 'command'."));
+
+    const sg = el("div",{class:"form-grid-3", style:"margin-top:8px;"});
+    const dirDiv  = el("div",{});
+    const fileDiv = el("div",{});
+    const shDiv   = el("div",{});
+
+    const dirInp  = el("input",{placeholder:"/opt/jobs"});
+    const fileInp = el("input",{placeholder:"mi_job.ksh"});
+    const shSel   = el("select",{});
+    shSel.innerHTML = '<option value="ksh" selected>ksh</option><option value="bash">bash</option><option value="sh">sh</option><option value="direct">directo (ejecutable)</option>';
+
+    dirDiv.appendChild(el("label",{},"ruta (directorio)"));
+    dirDiv.appendChild(dirInp);
+    fileDiv.appendChild(el("label",{},"script (archivo)"));
+    fileDiv.appendChild(fileInp);
+    shDiv.appendChild(el("label",{},"intérprete"));
+    shDiv.appendChild(shSel);
+
+    sg.appendChild(dirDiv);
+    sg.appendChild(fileDiv);
+    sg.appendChild(shDiv);
+    scriptBox.appendChild(sg);
+
+    const sg2 = el("div",{class:"form-grid-2", style:"margin-top:8px;"});
+    const argsDiv = el("div",{});
+    const cdDiv = el("div",{});
+
+    const argsInp = el("input",{placeholder:"--param1 123 --flag (opcional)"});
+    argsDiv.appendChild(el("label",{},"argumentos (opcional)"));
+    argsDiv.appendChild(argsInp);
+
+    const cdChk = el("input",{type:"checkbox"});
+    cdChk.checked = true;
+    cdDiv.appendChild(el("label",{},"ejecutar desde la ruta (cd)"));
+    const cdRow = el("div",{style:"display:flex; gap:8px; align-items:center;"});
+    cdRow.appendChild(cdChk);
+    cdRow.appendChild(el("span",{class:"muted-note"},"(recomendado para scripts con rutas relativas)"));
+    cdDiv.appendChild(cdRow);
+
+    sg2.appendChild(argsDiv);
+    sg2.appendChild(cdDiv);
+    scriptBox.appendChild(sg2);
+
+    const btnGen = el("button",{class:"button ghost", type:"button", style:"margin-top:8px;"},"Construir command");
+    scriptBox.appendChild(btnGen);
+
+    wrap.appendChild(scriptBox);
+
+    // Command (sí va a spec)
     wrap.appendChild(el("label",{},"command"));
-    wrap.appendChild(el("textarea",{"data-k":"command",style:"height:88px;"},"echo 'hola'"));
-    wrap.appendChild(el("label",{},"environment (JSON opcional)"));
-    wrap.appendChild(el("textarea",{"data-k":"environment",style:"height:72px;"},'{"KEY":"VALUE"}'));
+    const cmdTA = el("textarea",{"data-k":"command",style:"height:88px;"},"echo 'hola'");
+    wrap.appendChild(cmdTA);
+
+    const manualRow = el("div",{style:"display:flex; gap:10px; align-items:center; margin-top:6px;"});
+    const manualChk = el("input",{type:"checkbox"});
+    manualRow.appendChild(manualChk);
+    manualRow.appendChild(el("span",{class:"muted-note"},"Editar command manualmente (solo aplica si elegiste script)"));
+    wrap.appendChild(manualRow);
+
+    // Parámetros para la shell (argumentos). NO son environment vars.
+    const parmSection = el("div",{style:"margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:12px; display:none;"});
+    parmSection.appendChild(el("div",{class:"muted-note"},
+      "Estos valores se agregan como argumentos al final del command del script (ej: split_file.ksh -r -c ...). " +
+      "Si necesitas variables de entorno reales, usa el modo avanzado environment (JSON)."
+    ));
+
+    const argsManualRow = el("div",{style:"display:flex; gap:10px; align-items:center; margin-top:6px;"});
+    const argsManualChk = el("input",{type:"checkbox"});
+    argsManualRow.appendChild(argsManualChk);
+    argsManualRow.appendChild(el("span",{class:"muted-note"},"Editar args manualmente"));
+    parmSection.appendChild(argsManualRow);
+
+    // Builder de parámetros
+    const pBox = el("div",{style:"margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:12px; background:var(--panel-alt);"});
+    const pRow = el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap;"});
+    const pK = el("input",{placeholder:"PARM1", style:"min-width:160px;"});
+    const pV = el("input",{placeholder:"valor (ej: -r / *.log / /ruta)", style:"min-width:220px; flex:1;"});
+    const pAdd = el("button",{class:"button ghost", type:"button"},"+ Agregar");
+    pRow.appendChild(pK); pRow.appendChild(pV); pRow.appendChild(pAdd);
+    const pList = el("div",{style:"margin-top:8px; display:flex; flex-direction:column; gap:6px;"});
+    pBox.appendChild(pRow); pBox.appendChild(pList);
+    parmSection.appendChild(pBox);
+
+    // script_params se guarda en spec (opcional)
+    const spTA = el("textarea",{"data-k":"script_params",style:"height:72px;"},'{}');
+    const spDetails = el("details",{style:"margin-top:8px;"});
+    spDetails.appendChild(el("summary",{},"Modo avanzado: script_params (JSON)"));
+    spDetails.appendChild(spTA);
+    parmSection.appendChild(spDetails);
+
+    wrap.appendChild(parmSection);
+
+    function paramsFromUI(){
+      const rows = Array.from(pList.querySelectorAll('[data-p-row="1"]'));
+      const pairs = [];
+      rows.forEach(r=>{
+        const k = (r.querySelector('[data-p-k]')?.value || '').trim();
+        const v = (r.querySelector('[data-p-v]')?.value || '').trim();
+        if(k && v !== '') pairs.push([k,v]);
+      });
+      // ordenar PARM\d+ si aplica
+      const allParm = pairs.length && pairs.every(([k,_]) => /^PARM\d+$/i.test(k));
+      if(allParm){
+        pairs.sort((a,b)=> parseInt(a[0].slice(4),10) - parseInt(b[0].slice(4),10));
+      }
+      const obj = {};
+      pairs.forEach(([k,v])=>{ obj[k]=v; });
+      return {pairs, obj};
+    }
+
+    function syncParamsToTextarea(){
+      try{ JSON.parse(spTA.value || "{}"); } catch { return; } // no pisar si inválido
+      const {obj} = paramsFromUI();
+      spTA.value = JSON.stringify(obj);
+    }
+
+    function argsFromParams(){
+      const {pairs} = paramsFromUI();
+      return pairs.map(([_,v])=> String(v).trim()).filter(Boolean).join(' ');
+    }
+
+    function syncArgsFromParams(){
+      if(argsManualChk.checked) return;
+      argsInp.value = argsFromParams();
+    }
+
+    function addParamRow(k,v){
+      const row = el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap;", "data-p-row":"1"});
+      const kk = el("input",{"data-p-k":"1", style:"min-width:160px;", value: k || ""});
+      const vv = el("input",{"data-p-v":"1", style:"min-width:220px; flex:1;", value: v || ""});
+      const rm = el("button",{class:"button ghost", type:"button"},"Quitar");
+
+      function syncAll(){
+        syncParamsToTextarea();
+        syncArgsFromParams();
+        if(modeSel.value==="script" && !manualChk.checked) buildCommandFromScript();
+      }
+
+      rm.addEventListener("click", ()=>{ row.remove(); syncAll(); });
+      kk.addEventListener("input", syncAll);
+      vv.addEventListener("input", syncAll);
+
+      row.appendChild(kk);
+      row.appendChild(vv);
+      row.appendChild(rm);
+      pList.appendChild(row);
+      syncAll();
+    }
+
+    pAdd.addEventListener("click", ()=>{
+      const kk = (pK.value || "").trim();
+      if(!kk) return;
+      addParamRow(kk, pV.value || "");
+      pK.value = ""; pV.value = "";
+      pK.focus();
+    });
+
+    argsManualChk.addEventListener("change", ()=>{
+      argsInp.readOnly = !argsManualChk.checked;
+      if(!argsManualChk.checked) syncArgsFromParams();
+      if(modeSel.value==="script" && !manualChk.checked) buildCommandFromScript();
+    });
+
+    // Environment (JSON) real para spec (modo avanzado)
+    const envTA = el("textarea",{"data-k":"environment",style:"height:72px;"},'{}');
+    const envDetails = el("details",{style:"margin-top:8px;"});
+    envDetails.appendChild(el("summary",{},"Modo avanzado: environment (JSON)"));
+    envDetails.appendChild(envTA);
+    wrap.appendChild(envDetails);
+
+// Editor simple de environment (opcional). Se sincroniza con envTA.
+// Nota: environment son variables de entorno reales del proceso remoto, NO argumentos.
+wrap.appendChild(el("label",{},"variables de entorno (opcional)"));
+const varBox = el("div",{style:"padding:10px; border:1px solid var(--border); border-radius:12px; background:var(--panel-alt);"});
+varBox.appendChild(el("div",{class:"muted-note"},
+  "Estas variables se envían como environment del comando remoto. " +
+  "No son argumentos; para argumentos usa el bloque de Parámetros/args."
+));
+
+const kvRow = el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;"});
+const kInp = el("input",{placeholder:"NOMBRE_VAR", style:"min-width:180px;"});
+const vInp = el("input",{placeholder:"valor", style:"min-width:220px; flex:1;"});
+const addBtn = el("button",{class:"button ghost", type:"button"},"+ Agregar");
+kvRow.appendChild(kInp);
+kvRow.appendChild(vInp);
+kvRow.appendChild(addBtn);
+
+const list = el("div",{style:"margin-top:8px; display:flex; flex-direction:column; gap:6px;"});
+varBox.appendChild(kvRow);
+varBox.appendChild(list);
+wrap.appendChild(varBox);
+
+
+    // get_pty (sí va a spec)
     wrap.appendChild(el("label",{},"get_pty"));
-    const sel = el("select",{"data-k":"get_pty"}); sel.innerHTML='<option value="true">true</option><option value="false">false</option>'; wrap.appendChild(sel);
+    const sel = el("select",{"data-k":"get_pty"});
+    sel.innerHTML = '<option value="true">true</option><option value="false" selected>false</option>';
+    wrap.appendChild(sel);
+
+    // Helpers
+    const dq = (s) => (s ?? "").replace(/\\/g,"\\\\").replace(/"/g,'\\"');
+
+    function buildShellCall(shell, scriptRef){
+      const q = `"${dq(scriptRef)}"`;
+      if(shell === "direct") return q;
+      return `${shell} ${q}`;
+    }
+
+    function envFromUI(){
+      const env = {};
+      Array.from(list.querySelectorAll('[data-env-row="1"]')).forEach(row=>{
+        const kk = row.querySelector('[data-env-k]')?.value?.trim();
+        const vv = row.querySelector('[data-env-v]')?.value ?? "";
+        if(kk) env[kk] = vv;
+      });
+      return env;
+    }
+
+    function syncEnvToTextarea(){
+      // Si el JSON actual es inválido, no lo pisamos (para no romper el modo avanzado)
+      try{ JSON.parse(envTA.value || "{}"); } catch { return; }
+      envTA.value = JSON.stringify(envFromUI());
+    }
+
+    function addEnvRow(k, v){
+      const row = el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap;", "data-env-row":"1"});
+      const kk = el("input",{"data-env-k":"1", style:"min-width:180px;", value: k || ""});
+      const vv = el("input",{"data-env-v":"1", style:"min-width:220px; flex:1;", value: v || ""});
+      const rm = el("button",{class:"button ghost", type:"button"},"Quitar");
+
+      rm.addEventListener("click", ()=>{ row.remove(); syncEnvToTextarea(); });
+      kk.addEventListener("input", syncEnvToTextarea);
+      vv.addEventListener("input", syncEnvToTextarea);
+
+      row.appendChild(kk);
+      row.appendChild(vv);
+      row.appendChild(rm);
+      list.appendChild(row);
+      syncEnvToTextarea();
+    }
+
+    addBtn.addEventListener("click", ()=>{
+      const kk = (kInp.value || "").trim();
+      if(!kk) return;
+      addEnvRow(kk, vInp.value ?? "");
+      kInp.value = ""; vInp.value = "";
+      kInp.focus();
+    });
+
+    function buildCommandFromScript(){
+      const dir  = (dirInp.value || "").trim();
+      const file = (fileInp.value || "").trim();
+      const args = (argsInp.value || "").trim();
+      const shell = shSel.value || "ksh";
+      if(!file){
+        cmdTA.value = "";
+        return;
+      }
+      let cmd = "";
+      if(dir){
+        if(cdChk.checked){
+          const ref = (file.startsWith("./") || file.startsWith("/") ) ? file : `./${file}`;
+          cmd = `cd "${dq(dir)}" && ${buildShellCall(shell, ref)}`;
+        }else{
+          const cleanDir = dir.replace(/\/+$/,"");
+          const cleanFile = file.replace(/^\/+/, "");
+          const full = `${cleanDir}/${cleanFile}`;
+          cmd = buildShellCall(shell, full);
+        }
+      }else{
+        cmd = buildShellCall(shell, file);
+      }
+      if(args) cmd += ` ${args}`;
+      cmdTA.value = cmd;
+    }
+
+    function applyMode(){
+      const m = modeSel.value || "command";
+      const isScript = (m === "script");
+      scriptBox.style.display = isScript ? "block" : "none";
+      parmSection.style.display = isScript ? "block" : "none";
+
+      if(isScript){
+        // args: por defecto se construyen desde script_params
+        argsInp.readOnly = !argsManualChk.checked;
+        if(!argsManualChk.checked) syncArgsFromParams();
+
+        cmdTA.readOnly = !manualChk.checked;
+        if(!manualChk.checked){
+          buildCommandFromScript();
+        }
+      }else{
+        cmdTA.readOnly = false;
+      }
+    }
+
+    // Eventos
+    modeSel.addEventListener("change", applyMode);
+    manualChk.addEventListener("change", applyMode);
+
+    [dirInp, fileInp, argsInp].forEach(inp=>{
+      inp.addEventListener("input", ()=>{ if(modeSel.value==="script" && !manualChk.checked) buildCommandFromScript(); });
+    });
+    shSel.addEventListener("change", ()=>{ if(modeSel.value==="script" && !manualChk.checked) buildCommandFromScript(); });
+    cdChk.addEventListener("change", ()=>{ if(modeSel.value==="script" && !manualChk.checked) buildCommandFromScript(); });
+    btnGen.addEventListener("click", ()=>{ if(modeSel.value==="script") buildCommandFromScript(); });
+
+    // Estado inicial
+    applyMode();
   }
 
   if(type==="WinRMOperator"){
@@ -532,19 +1167,242 @@ function addTask(type){
     const sel = el("select",{"data-k":"powershell"}); sel.innerHTML='<option value="true">true</option><option value="false">false</option>'; wrap.appendChild(sel);
   }
 
-  const adv = el("details",{style:"margin-top:8px;"});
-  adv.appendChild(el("summary",{}, "Avanzado (queue/pool/priority)"));
-  const grid = el("div",{style:"display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:8px;margin-top:8px;"});
-  grid.innerHTML = `
-    <div><label>queue</label><input data-k="queue" placeholder="celery-high" /></div>
-    <div><label>pool</label><input data-k="pool" placeholder="default_pool" /></div>
-    <div><label>priority_weight</label><input data-k="priority_weight" type="number" min="1" step="1" /></div>`;
-  const row2 = el("div",{style:"display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:8px;margin-top:8px;"});
-  row2.innerHTML = `
-    <div><label>depends_on_past</label><select data-k="depends_on_past"><option value="">no</option><option value="true">sí</option></select></div>
-    <div><label>task_concurrency</label><input data-k="task_concurrency" type="number" min="1" step="1" /></div>`;
-  adv.appendChild(grid); adv.appendChild(row2);
-  wrap.appendChild(adv);
+const adv = el("details",{style:"margin-top:8px;"});
+adv.appendChild(el("summary",{}, "Recursos (Control-M) y Avanzado"));
+
+// ── Recursos (múltiples, estilo Control-M). Nota: Airflow aplica SOLO 1 pool por task.
+const resBox = el("div",{style:"margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:12px;"});
+resBox.appendChild(el("div",{class:"muted-note"},
+  "Puedes registrar más de un recurso (cuantitativo/exclusivo) para la migración desde Control-M. " +
+  "Airflow aplica solo 1 pool por task: marca uno como 'aplicado'. Los demás quedan documentados en la spec (resources)."
+));
+
+// Vista/entrada del pool aplicado (Airflow aplica 1 pool por task)
+// Aquí ingresas un recurso y lo agregas a la lista. El "aplicado" es el que está marcado como primary.
+const applied = el("div",{style:"display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:8px;margin-top:8px;align-items:end;"});
+
+const apTypeDiv = el("div",{}); apTypeDiv.appendChild(el("label",{},"tipo (aplicado)"));
+const apTypeView = el("select",{style:"width:100%;"});
+apTypeView.innerHTML = '<option value="quant" selected>Cuantitativo</option><option value="exclusive">Exclusivo</option>';
+apTypeDiv.appendChild(apTypeView);
+
+const apPoolDiv = el("div",{}); apPoolDiv.appendChild(el("label",{},"pool (aplicado)"));
+const apPoolView = el("input",{placeholder:"nombre pool / recurso", style:"width:100%;"});
+apPoolDiv.appendChild(apPoolView);
+
+const apSlotsDiv = el("div",{}); apSlotsDiv.appendChild(el("label",{},"slots (aplicados)"));
+const apSlotsView = el("input",{type:"number", min:"1", step:"1", value:"1", style:"width:100%;"});
+apSlotsDiv.appendChild(apSlotsView);
+
+const apAddDiv = el("div",{});
+apAddDiv.appendChild(el("label",{},""));
+const apAddBtn = el("button",{class:"button ghost", type:"button", style:"width:100%;"},"+ Agregar recurso");
+apAddDiv.appendChild(apAddBtn);
+
+applied.appendChild(apTypeDiv);
+applied.appendChild(apPoolDiv);
+applied.appendChild(apSlotsDiv);
+applied.appendChild(apAddDiv);
+resBox.appendChild(applied);
+
+// Alias para reutilizar la lógica existente
+const rType = apTypeView;
+const rPool = apPoolView;
+const rSlots = apSlotsView;
+const rAdd  = apAddBtn;
+
+// Lista de recursos
+const resList = el("div",{style:"margin-top:8px; display:flex; flex-direction:column; gap:6px;"});
+resBox.appendChild(resList);
+
+adv.appendChild(resBox);
+
+// Hidden fields para el generador (compatibilidad)
+const poolInp = el("input",{"data-k":"pool",style:"display:none;"});
+const slotsInp = el("input",{"data-k":"pool_slots",style:"display:none;", value:"1"});
+const resourcesTA = el("textarea",{"data-k":"resources",style:"display:none;height:72px;"}, "[]");
+adv.appendChild(poolInp);
+adv.appendChild(slotsInp);
+adv.appendChild(resourcesTA);
+
+// ── Otros campos avanzados comunes
+const grid2 = el("div",{style:"display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:8px;margin-top:8px;"});
+
+const qWrap = el("div",{});
+qWrap.appendChild(el("label",{},"queue (opcional)"));
+qWrap.appendChild(el("input",{"data-k":"queue",placeholder:"celery queue"}));
+
+const pwWrap = el("div",{});
+pwWrap.appendChild(el("label",{},"priority_weight (opcional)"));
+pwWrap.appendChild(el("input",{"data-k":"priority_weight",type:"number",min:"1",step:"1"}));
+
+const dopWrap = el("div",{});
+dopWrap.appendChild(el("label",{},"depends_on_past"));
+const dopSel = el("select",{"data-k":"depends_on_past"});
+dopSel.innerHTML = '<option value="false" selected>false</option><option value="true">true</option>';
+dopWrap.appendChild(dopSel);
+
+const tcWrap = el("div",{});
+tcWrap.appendChild(el("label",{},"task_concurrency (opcional)"));
+tcWrap.appendChild(el("input",{"data-k":"task_concurrency",type:"number",min:"1",step:"1"}));
+
+grid2.appendChild(qWrap);
+grid2.appendChild(pwWrap);
+grid2.appendChild(dopWrap);
+grid2.appendChild(tcWrap);
+
+adv.appendChild(grid2);
+
+// helpers recursos
+function _resRead(){
+  try{ return JSON.parse(resourcesTA.value || "[]") || []; } catch { return []; }
+}
+function _resWrite(list){
+  resourcesTA.value = JSON.stringify(list || []);
+}
+function _resSyncApplied(list){
+  const applied = list.find(x=>x.primary) || list[0];
+  if(applied && applied.pool){
+    poolInp.value = applied.pool;
+    slotsInp.value = String(applied.slots || 1);
+    apPoolView.value = applied.pool;
+    apSlotsView.value = String(applied.slots || 1);
+    apTypeView.value = (applied.type === "exclusive") ? "exclusive" : "quant";
+    // Ajuste slots en UI según tipo
+    if(apTypeView.value==="exclusive"){ apSlotsView.value = "1"; apSlotsView.disabled = true; }
+    else { apSlotsView.disabled = false; }
+  }else{
+    poolInp.value = "";
+    slotsInp.value = "1";
+    apPoolView.value = "";
+    apSlotsView.value = "1";
+    apTypeView.value = "quant";
+    apSlotsView.disabled = false;
+  }
+}
+
+function _resRender(){
+  const list = _resRead();
+  resList.innerHTML = "";
+  if(!list.length){
+    resList.appendChild(el("div",{class:"muted-note"},"(sin recursos configurados)"));
+    _resSyncApplied(list);
+    return;
+  }
+
+  list.forEach((it, idx)=>{
+    const row = el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px; border:1px solid var(--border); border-radius:12px; background:var(--panel-alt);"});
+    const radio = el("input",{type:"radio", name:`res_primary_${tid}`});
+    radio.checked = !!it.primary;
+
+    const type = el("span",{class:"pill"}, it.type==="exclusive" ? "Exclusivo" : "Cuantitativo");
+    const pool = el("span",{style:"min-width:220px; word-break:break-all;"}, it.pool || "");
+    const slots = el("span",{class:"muted-note"}, `slots: ${it.slots || 1}`);
+
+    const editType = el("select",{});
+    editType.innerHTML = '<option value="quant">Cuantitativo</option><option value="exclusive">Exclusivo</option>';
+    editType.value = it.type || "quant";
+
+    const editPool = el("input",{value: it.pool || "", style:"min-width:220px; flex:1;"});
+    const editSlots = el("input",{type:"number", min:"1", step:"1", value: String(it.slots || 1), style:"width:120px;"});
+    if(editType.value==="exclusive"){ editSlots.value="1"; editSlots.disabled=true; }
+
+    const rm = el("button",{class:"button ghost", type:"button"},"Quitar");
+
+    function save(){
+      const arr = _resRead();
+      const cur = arr[idx];
+      if(!cur) return;
+      cur.type = editType.value;
+      cur.pool = (editPool.value || "").trim();
+      cur.slots = (cur.type==="exclusive") ? 1 : Math.max(1, parseInt(editSlots.value||"1",10));
+      // mantener primary por radio group
+      _resWrite(arr);
+      _resSyncApplied(arr);
+      _resRender();
+    }
+
+    radio.addEventListener("change", ()=>{
+      const arr = _resRead();
+      arr.forEach((x,i)=> x.primary = (i===idx));
+      _resWrite(arr);
+      _resSyncApplied(arr);
+      _resRender();
+    });
+
+    editType.addEventListener("change", ()=>{
+      if(editType.value==="exclusive"){ editSlots.value="1"; editSlots.disabled=true; }
+      else { editSlots.disabled=false; }
+      save();
+    });
+    editPool.addEventListener("input", save);
+    editSlots.addEventListener("input", save);
+
+    rm.addEventListener("click", ()=>{
+      const arr = _resRead();
+      arr.splice(idx,1);
+      // si quitamos el primary, elegir primero
+      if(arr.length && !arr.some(x=>x.primary)) arr[0].primary = true;
+      _resWrite(arr);
+      _resSyncApplied(arr);
+      _resRender();
+    });
+
+    row.appendChild(radio);
+    row.appendChild(type);
+    row.appendChild(pool);
+    row.appendChild(slots);
+    // editor inline
+    row.appendChild(el("span",{class:"muted-note"},"→"));
+    row.appendChild(editType);
+    row.appendChild(editPool);
+    row.appendChild(editSlots);
+    row.appendChild(rm);
+
+    resList.appendChild(row);
+  });
+
+  _resSyncApplied(list);
+}
+
+function _resAdd(type,pool,slots){
+  const arr = _resRead();
+  const item = {
+    type: (type==="exclusive" ? "exclusive" : "quant"),
+    pool: (pool || "").trim(),
+    slots: (type==="exclusive" ? 1 : Math.max(1, parseInt(slots||"1",10))),
+    primary: false
+  };
+  if(!arr.length){
+    item.primary = true;
+  }
+  arr.push(item);
+  // si no hay primary, set first
+  if(arr.length && !arr.some(x=>x.primary)) arr[0].primary = true;
+  _resWrite(arr);
+  _resSyncApplied(arr);
+  _resRender();
+}
+
+// comportamiento del tipo en el form
+rType.addEventListener("change", ()=>{
+  if(rType.value==="exclusive"){ rSlots.value="1"; rSlots.disabled=true; }
+  else { rSlots.disabled=false; }
+});
+
+rAdd.addEventListener("click", ()=>{
+  const pool = (rPool.value || "").trim();
+  if(!pool) return;
+  _resAdd(rType.value, pool, rSlots.value);
+  rPool.value = "";
+  rSlots.value = "1";
+  rPool.focus();
+});
+
+// estado inicial
+_resRender();
+
+wrap.appendChild(adv);
 
   const del = el("button",{},"Eliminar");
   del.onclick = () => { wrap.remove(); refreshTaskSelects(); updateGraph(); };
@@ -608,15 +1466,15 @@ function addExternalDep(){
 (function initOps(){
   const sel = document.getElementById("opsel");
   if(sel){ OP_TYPES.forEach(([k,v])=> sel.appendChild(el("option",{value:v}, `${k} — ${v}`))); }
-  document.getElementById("add_op")   ?.addEventListener('click', ()=> addTask(sel.value));
-  document.getElementById("add_empty")?.addEventListener('click', ()=> addTask("EmptyOperator"));
-  document.getElementById("add_bash") ?.addEventListener('click', ()=> addTask("BashOperator"));
-  document.getElementById("add_python")?.addEventListener('click', ()=> addTask("PythonOperator"));
-  document.getElementById("add_dep")  ?.addEventListener('click', addDep);
-  document.getElementById("add_extdep")?.addEventListener('click', addExternalDep);
-  document.getElementById("add_custom")?.addEventListener('click', ()=> addTask("CustomOperator"));
-  document.getElementById("add_ssh")   ?.addEventListener('click', ()=> addTask("SSHOperator"));
-  document.getElementById("add_winrm") ?.addEventListener('click', ()=> addTask("WinRMOperator"));
+  document.getElementById("add_op")?.addEventListener("click", (e)=>{ e.preventDefault(); addTask(sel.value); });
+  document.getElementById("add_empty")?.addEventListener("click", (e)=>{ e.preventDefault(); addTask("EmptyOperator"); });
+  document.getElementById("add_bash")?.addEventListener("click", (e)=>{ e.preventDefault(); addTask("BashOperator"); });
+  document.getElementById("add_python")?.addEventListener("click", (e)=>{ e.preventDefault(); addTask("PythonOperator"); });
+  document.getElementById("add_dep")?.addEventListener("click", (e)=>{ e.preventDefault(); addDep(); });
+  document.getElementById("add_extdep")?.addEventListener("click", (e)=>{ e.preventDefault(); addExternalDep(); });
+  document.getElementById("add_custom")?.addEventListener("click", (e)=>{ e.preventDefault(); addTask("CustomOperator"); });
+  document.getElementById("add_ssh")?.addEventListener("click", (e)=>{ e.preventDefault(); addTask("SSHOperator"); });
+  document.getElementById("add_winrm")?.addEventListener("click", (e)=>{ e.preventDefault(); addTask("WinRMOperator"); });
 })();
 
 /* ===== Collect + Preview/Download ===== */
@@ -670,8 +1528,7 @@ function collect(){
     subapp: document.getElementById("subapp")?.value || "",
     retries: parseInt(document.getElementById("retries")?.value || "1", 10),
     retry_minutes: parseInt(document.getElementById("retry_minutes")?.value || "5", 10),
-    start_date: document.getElementById("start_date")?.value || "",
-    schedule: (window.builderState?.schedule) || "@daily",
+    start_date: document.getElementById("start_date")?.value || "",    schedule: (function(){ const c = buildCronFromUI2(); window.builderState.schedule = c; return c; })(),
     timezone: (window.builderState?.timezone) || "UTC",
     start_time: start_time_once,
     catchup: !!document.getElementById("catchup")?.checked,
@@ -791,5 +1648,6 @@ document.getElementById("btn_preview_footer")?.addEventListener("click", updateG
 });
 updateGraph();
 document.getElementById('themeToggle')?.addEventListener('click', ()=>{ setTimeout(()=>{ cy=null; updateGraph(); }, 50); });
+});
 </script>
 {% endblock %}

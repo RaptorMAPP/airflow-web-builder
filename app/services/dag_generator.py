@@ -116,6 +116,83 @@ from airflow import DAG
 """
 
 # ────────────────────────────────────────────────────────────────────────────────
+# Timetable: MULTI cron (horarios específicos)
+# Se usa cuando schedule empieza con "MULTI|cron1||cron2||...".
+# ────────────────────────────────────────────────────────────────────────────────
+_MULTI_CRON_SUPPORT = """\
+from airflow.timetables.base import DagRunInfo, DataInterval, TimeRestriction, Timetable
+from croniter import croniter
+
+class MultiCronTimetable(Timetable):
+    # Timetable simple que combina múltiples expresiones cron (trigger-based).
+
+    def __init__(self, crons, timezone: str = "UTC"):
+        self._crons = list(crons or [])
+        self._timezone = timezone or "UTC"
+
+    @property
+    def summary(self) -> str:
+        return "MultiCronTimetable"
+
+    def serialize(self) -> dict:
+        return {"crons": self._crons, "timezone": self._timezone}
+
+    @classmethod
+    def deserialize(cls, data: dict) -> "MultiCronTimetable":
+        return cls(crons=data.get("crons") or [], timezone=data.get("timezone") or "UTC")
+
+    def infer_manual_data_interval(self, run_after):
+        # Trigger-based: start=end
+        run_after = run_after.in_timezone(self._timezone)
+        return DataInterval(start=run_after, end=run_after)
+
+    def next_dagrun_info(self, last_automated_data_interval, restriction: TimeRestriction):
+        now = pendulum.now(self._timezone)
+
+        earliest = restriction.earliest
+        if earliest is None:
+            earliest = now
+        else:
+            earliest = earliest.in_timezone(self._timezone)
+
+        if last_automated_data_interval is None:
+            after = earliest
+        else:
+            after = last_automated_data_interval.end.in_timezone(self._timezone)
+            if not restriction.catchup:
+                after = max(after, now)
+            after = max(after, earliest)
+
+        # croniter trabaja mejor con datetime naive
+        after_naive = after.replace(tzinfo=None)
+
+        candidates = []
+        for expr in self._crons:
+            try:
+                it = croniter(expr, after_naive)
+                nxt = it.get_next(datetime)
+                candidates.append(nxt)
+            except Exception:
+                continue
+
+        if not candidates:
+            return None
+
+        next_naive = min(candidates)
+        next_time = pendulum.instance(next_naive, tz=self._timezone)
+
+        latest = restriction.latest
+        if latest is not None:
+            latest = latest.in_timezone(self._timezone)
+            if next_time > latest:
+                return None
+
+        data_interval = DataInterval(start=next_time, end=next_time)
+        return DagRunInfo(run_after=next_time, data_interval=data_interval)
+"""
+
+
+# ────────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────────────────
 
@@ -145,18 +222,30 @@ def _json_to_py_literal(raw: Any, default: str = "{}") -> str:
     except Exception:
         return default
 
+
 def _bo_kwargs(t: Dict[str, Any]) -> str:
     """
     Retorna kwargs comunes de BaseOperator si están presentes en la spec:
-    queue (Celery), pool, priority_weight, depends_on_past, task_concurrency.
+    queue (Celery), pool, pool_slots, priority_weight, depends_on_past, task_concurrency.
     """
     parts = []
-    if t.get("queue"): parts.append(f'queue="{t["queue"]}"')
-    if t.get("pool"): parts.append(f'pool="{t["pool"]}"')
-    if t.get("priority_weight"): parts.append(f'priority_weight={int(t["priority_weight"])}')
-    if str(t.get("depends_on_past")).lower() in ("true","1"): parts.append("depends_on_past=True")
-    if t.get("task_concurrency"): parts.append(f'task_concurrency={int(t["task_concurrency"])}')
+    if t.get("queue"):
+        parts.append(f'queue="{t["queue"]}"')
+    if t.get("pool"):
+        parts.append(f'pool="{t["pool"]}"')
+        if t.get("pool_slots"):
+            try:
+                parts.append(f'pool_slots={int(t["pool_slots"])}')
+            except Exception:
+                pass
+    if t.get("priority_weight"):
+        parts.append(f'priority_weight={int(t["priority_weight"])}')
+    if str(t.get("depends_on_past")).lower() in ("true", "1"):
+        parts.append("depends_on_past=True")
+    if t.get("task_concurrency"):
+        parts.append(f'task_concurrency={int(t["task_concurrency"])}')
     return (", " + ", ".join(parts)) if parts else ""
+
 
 def _parse_kwargs_json(raw: Any) -> str:
     """Devuelve un literal dict de Python para **kwargs. Si viene vacío, {}."""
@@ -170,9 +259,11 @@ def _parse_kwargs_json(raw: Any) -> str:
     except Exception:
         return "{}"
 
+
 def _resolve_operator_key(ttype: str) -> str:
     # DummyOperator se resoluciona como EmptyOperator
     return "EmptyOperator" if ttype == "DummyOperator" else ttype
+
 
 def _imports_for_tasks(tasks: List[Dict[str, Any]]) -> List[str]:
     used: set[str] = set()
@@ -187,6 +278,7 @@ def _imports_for_tasks(tasks: List[Dict[str, Any]]) -> List[str]:
             used.add(cimp)
     return sorted(used)
 
+
 def _sanitize_id(s: str) -> str:
     s = (s or "").strip()
     s = re.sub(r"\s+", "_", s)
@@ -195,21 +287,25 @@ def _sanitize_id(s: str) -> str:
         s = f"t_{s}"
     return s or "t_task"
 
+
 def _render_python_callables(tasks: List[Dict[str, Any]]) -> str:
     """Genera stubs para PythonOperator."""
     pieces: List[str] = []
     for t in tasks or []:
         if t.get("type") == "PythonOperator":
-            fn = _sanitize_id(t.get("python_callable_name") or f'fn_{t.get("task_id","task")}')
+            fn = _sanitize_id(t.get("python_callable_name") or f'fn_{t.get("task_id", "task")}')
             body = t.get("python_callable_body") or "print('Hello from PythonOperator')"
             pieces.append(f"def {fn}(**context):\n    {body}\n")
     return ("\n".join(pieces) + ("\n" if pieces else ""))
 
+
 def _fmt_bool(val: Any) -> str:
     return "True" if str(val).strip().lower() in ("1", "true", "yes", "y") else "False"
 
+
 def _quote(s: str) -> str:
     return (s or "").replace('"', '\\"')
+
 
 def _render_task_line(t: Dict[str, Any]) -> str:
     ttype = t["type"]
@@ -229,55 +325,60 @@ def _render_task_line(t: Dict[str, Any]) -> str:
         return f'{task_id} = PythonOperator(task_id="{task_id}", python_callable={fn}{_bo_kwargs(t)})'
 
     if ttype == "SqliteOperator":
-        return f'{task_id} = SqliteOperator(task_id="{task_id}", sqlite_conn_id="{t.get("sqlite_conn_id","sqlite_default")}", sql="{_quote(t.get("sql","SELECT 1;"))}"{_bo_kwargs(t)})'
+        return f'{task_id} = SqliteOperator(task_id="{task_id}", sqlite_conn_id="{t.get("sqlite_conn_id", "sqlite_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
 
     if ttype == "PostgresOperator":
-        return f'{task_id} = PostgresOperator(task_id="{task_id}", postgres_conn_id="{t.get("postgres_conn_id","postgres_default")}", sql="{_quote(t.get("sql","SELECT 1;"))}"{_bo_kwargs(t)})'
+        return f'{task_id} = PostgresOperator(task_id="{task_id}", postgres_conn_id="{t.get("postgres_conn_id", "postgres_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
 
     if ttype == "MySqlOperator":
-        return f'{task_id} = MySqlOperator(task_id="{task_id}", mysql_conn_id="{t.get("mysql_conn_id","mysql_default")}", sql="{_quote(t.get("sql","SELECT 1;"))}"{_bo_kwargs(t)})'
+        return f'{task_id} = MySqlOperator(task_id="{task_id}", mysql_conn_id="{t.get("mysql_conn_id", "mysql_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
 
     if ttype == "MsSqlOperator":
-        return f'{task_id} = MsSqlOperator(task_id="{task_id}", mssql_conn_id="{t.get("mssql_conn_id","mssql_default")}", sql="{_quote(t.get("sql","SELECT 1;"))}"{_bo_kwargs(t)})'
+        return f'{task_id} = MsSqlOperator(task_id="{task_id}", mssql_conn_id="{t.get("mssql_conn_id", "mssql_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
 
     if ttype == "OracleOperator":
-        return f'{task_id} = OracleOperator(task_id="{task_id}", oracle_conn_id="{t.get("oracle_conn_id","oracle_default")}", sql="{_quote(t.get("sql","SELECT 1 FROM dual"))}"{_bo_kwargs(t)})'
+        return f'{task_id} = OracleOperator(task_id="{task_id}", oracle_conn_id="{t.get("oracle_conn_id", "oracle_default")}", sql="{_quote(t.get("sql", "SELECT 1 FROM dual"))}"{_bo_kwargs(t)})'
 
     if ttype == "SnowflakeOperator":
-        return f'{task_id} = SnowflakeOperator(task_id="{task_id}", snowflake_conn_id="{t.get("snowflake_conn_id","snowflake_default")}", sql="{_quote(t.get("sql","SELECT 1;"))}"{_bo_kwargs(t)})'
+        return f'{task_id} = SnowflakeOperator(task_id="{task_id}", snowflake_conn_id="{t.get("snowflake_conn_id", "snowflake_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
 
     if ttype == "S3CreateObjectOperator":
-        return (f'{task_id} = S3CreateObjectOperator(task_id="{task_id}", aws_conn_id="{t.get("aws_conn_id","aws_default")}", '
-                f's3_bucket="{t.get("s3_bucket","my-bucket")}", s3_key="{t.get("s3_key","path/file.txt")}", data="{_quote(t.get("data","hello world"))}"{_bo_kwargs(t)})')
+        return (
+            f'{task_id} = S3CreateObjectOperator(task_id="{task_id}", aws_conn_id="{t.get("aws_conn_id", "aws_default")}", '
+            f's3_bucket="{t.get("s3_bucket", "my-bucket")}", s3_key="{t.get("s3_key", "path/file.txt")}", data="{_quote(t.get("data", "hello world"))}"{_bo_kwargs(t)})')
 
     if ttype == "LambdaInvokeFunctionOperator":
-        return (f'{task_id} = LambdaInvokeFunctionOperator(task_id="{task_id}", aws_conn_id="{t.get("aws_conn_id","aws_default")}", '
-                f'function_name="{t.get("function_name","my-fn")}", payload="{_quote(t.get("payload","{}"))}"{_bo_kwargs(t)})')
+        return (
+            f'{task_id} = LambdaInvokeFunctionOperator(task_id="{task_id}", aws_conn_id="{t.get("aws_conn_id", "aws_default")}", '
+            f'function_name="{t.get("function_name", "my-fn")}", payload="{_quote(t.get("payload", "{}"))}"{_bo_kwargs(t)})')
 
     if ttype == "GlueJobOperator":
-        return (f'{task_id} = GlueJobOperator(task_id="{task_id}", aws_conn_id="{t.get("aws_conn_id","aws_default")}", '
-                f'job_name="{t.get("job_name","my-job")}", script_location="{t.get("script_location","s3://bucket/script.py")}", '
-                f'iam_role_name="{t.get("iam_role_name","glue-role")}", num_of_dpus={int(t.get("num_of_dpus") or 10)}{_bo_kwargs(t)})')
+        return (
+            f'{task_id} = GlueJobOperator(task_id="{task_id}", aws_conn_id="{t.get("aws_conn_id", "aws_default")}", '
+            f'job_name="{t.get("job_name", "my-job")}", script_location="{t.get("script_location", "s3://bucket/script.py")}", '
+            f'iam_role_name="{t.get("iam_role_name", "glue-role")}", num_of_dpus={int(t.get("num_of_dpus") or 10)}{_bo_kwargs(t)})')
 
     if ttype == "BigQueryExecuteQueryOperator":
-        return (f'{task_id} = BigQueryExecuteQueryOperator(task_id="{task_id}", gcp_conn_id="{t.get("gcp_conn_id","google_cloud_default")}", '
-                f'sql="{_quote(t.get("sql","SELECT 1;"))}", use_legacy_sql={_fmt_bool(t.get("use_legacy_sql","false"))}{_bo_kwargs(t)})')
+        return (
+            f'{task_id} = BigQueryExecuteQueryOperator(task_id="{task_id}", gcp_conn_id="{t.get("gcp_conn_id", "google_cloud_default")}", '
+            f'sql="{_quote(t.get("sql", "SELECT 1;"))}", use_legacy_sql={_fmt_bool(t.get("use_legacy_sql", "false"))}{_bo_kwargs(t)})')
 
     if ttype == "DataflowCreateJavaJobOperator":
         options = _quote(t.get("options") or "{}")
-        return (f'{task_id} = DataflowCreateJavaJobOperator(task_id="{task_id}", gcp_conn_id="{t.get("gcp_conn_id","google_cloud_default")}", '
-                f'jar="{t.get("jar","/path/app.jar")}", job_name="{t.get("job_name","dataflow-job")}", options="{options}"{_bo_kwargs(t)})')
+        return (
+            f'{task_id} = DataflowCreateJavaJobOperator(task_id="{task_id}", gcp_conn_id="{t.get("gcp_conn_id", "google_cloud_default")}", '
+            f'jar="{t.get("jar", "/path/app.jar")}", job_name="{t.get("job_name", "dataflow-job")}", options="{options}"{_bo_kwargs(t)})')
 
     if ttype == "AzureDataFactoryRunPipelineOperator":
         params = _quote(t.get("parameters") or "{}")
         return (f'{task_id} = AzureDataFactoryRunPipelineOperator(task_id="{task_id}", '
-                f'azure_data_factory_conn_id="{t.get("azure_data_factory_conn_id","azure_data_factory_default")}", '
-                f'pipeline_name="{t.get("pipeline_name","pipeline1")}", parameters="{params}"{_bo_kwargs(t)})')
+                f'azure_data_factory_conn_id="{t.get("azure_data_factory_conn_id", "azure_data_factory_default")}", '
+                f'pipeline_name="{t.get("pipeline_name", "pipeline1")}", parameters="{params}"{_bo_kwargs(t)})')
 
     if ttype == "DockerOperator":
-        return (f'{task_id} = DockerOperator(task_id="{task_id}", image="{t.get("image","python:3.11")}", '
-                f'api_version="{t.get("api_version","auto")}", command="{_quote(t.get("command","echo hello"))}", '
-                f'docker_url="{t.get("docker_url","unix://var/run/docker.sock")}", auto_remove={_fmt_bool(t.get("auto_remove","true"))}{_bo_kwargs(t)})')
+        return (f'{task_id} = DockerOperator(task_id="{task_id}", image="{t.get("image", "python:3.11")}", '
+                f'api_version="{t.get("api_version", "auto")}", command="{_quote(t.get("command", "echo hello"))}", '
+                f'docker_url="{t.get("docker_url", "unix://var/run/docker.sock")}", auto_remove={_fmt_bool(t.get("auto_remove", "true"))}{_bo_kwargs(t)})')
 
     if ttype == "KubernetesPodOperator":
         # soporta env/cmds/args como JSON o literales python
@@ -293,20 +394,22 @@ def _render_task_line(t: Dict[str, Any]) -> str:
 
     if ttype == "SparkSubmitOperator":
         args = _json_to_py_literal(t.get("application_args") or "[]", "[]")
-        return (f'{task_id} = SparkSubmitOperator(task_id="{task_id}", application="{t.get("application","/path/app.py")}", '
-                f'conn_id="{t.get("conn_id","spark_default")}", application_args={args}{_bo_kwargs(t)})')
+        return (
+            f'{task_id} = SparkSubmitOperator(task_id="{task_id}", application="{t.get("application", "/path/app.py")}", '
+            f'conn_id="{t.get("conn_id", "spark_default")}", application_args={args}{_bo_kwargs(t)})')
 
     if ttype == "DatabricksSubmitRunOperator":
         payload = _json_to_py_literal(t.get("json") or "{}", "{}")
         return (f'{task_id} = DatabricksSubmitRunOperator(task_id="{task_id}", '
-                f'databricks_conn_id="{t.get("databricks_conn_id","databricks_default")}", json={payload}{_bo_kwargs(t)})')
+                f'databricks_conn_id="{t.get("databricks_conn_id", "databricks_default")}", json={payload}{_bo_kwargs(t)})')
 
     if ttype == "SimpleHttpOperator":
         data = t.get("data") or ""
         headers = t.get("headers") or ""
-        return (f'{task_id} = SimpleHttpOperator(task_id="{task_id}", http_conn_id="{t.get("http_conn_id","http_default")}", '
-                f'endpoint="{t.get("endpoint","/")}", method="{(t.get("method") or "GET").upper()}", '
-                f'data={repr(data)}, headers={repr(headers)}{_bo_kwargs(t)})')
+        return (
+            f'{task_id} = SimpleHttpOperator(task_id="{task_id}", http_conn_id="{t.get("http_conn_id", "http_default")}", '
+            f'endpoint="{t.get("endpoint", "/")}", method="{(t.get("method") or "GET").upper()}", '
+            f'data={repr(data)}, headers={repr(headers)}{_bo_kwargs(t)})')
 
     if ttype == "EmailOperator":
         to = t.get("to", "example@example.com")
@@ -319,9 +422,9 @@ def _render_task_line(t: Dict[str, Any]) -> str:
         return (
             f'{task_id} = ExternalTaskSensor('
             f'task_id="{task_id}", '
-            f'external_dag_id="{_quote(t.get("external_dag_id","other_dag"))}", '
+            f'external_dag_id="{_quote(t.get("external_dag_id", "other_dag"))}", '
             f'external_task_id={repr(t.get("external_task_id") or None)}, '  # None => espera al DAG completo
-            f'mode="{t.get("mode","reschedule")}", '
+            f'mode="{t.get("mode", "reschedule")}", '
             f'poke_interval={int(t.get("poke_interval") or 60)}, '
             f'timeout={int(t.get("timeout") or 3600)}'
             f'{_bo_kwargs(t)})'
@@ -332,14 +435,14 @@ def _render_task_line(t: Dict[str, Any]) -> str:
         return (
             f'{task_id} = TriggerDagRunOperator('
             f'task_id="{task_id}", '
-            f'trigger_dag_id="{_quote(t.get("trigger_dag_id","other_dag"))}"'
+            f'trigger_dag_id="{_quote(t.get("trigger_dag_id", "other_dag"))}"'
             f'{_bo_kwargs(t)})'
         )
 
     if ttype == "CustomOperator":
-        module = (t.get("import_path") or "").strip()     # ej: airflow.providers.amazon.aws.operators.s3
-        cls     = (t.get("class_name") or "").strip()     # ej: S3CreateObjectOperator
-        kwargs  = _parse_kwargs_json(t.get("kwargs"))     # ej: {"aws_conn_id":"...", "s3_bucket":"..."}
+        module = (t.get("import_path") or "").strip()  # ej: airflow.providers.amazon.aws.operators.s3
+        cls = (t.get("class_name") or "").strip()  # ej: S3CreateObjectOperator
+        kwargs = _parse_kwargs_json(t.get("kwargs"))  # ej: {"aws_conn_id":"...", "s3_bucket":"..."}
         if not module or not cls:
             # si falta algo esencial, genera Empty para no romper
             return f'{task_id} = EmptyOperator(task_id="{task_id}")  # CUSTOM MISSING IMPORT/CLASS'
@@ -366,6 +469,7 @@ def _render_task_line(t: Dict[str, Any]) -> str:
 
     return ""  # tipo no soportado
 
+
 def _render_tasks(tasks: List[Dict[str, Any]]) -> str:
     lines: List[str] = []
     for raw in tasks or []:
@@ -376,6 +480,7 @@ def _render_tasks(tasks: List[Dict[str, Any]]) -> str:
         if line:
             lines.append(line)
     return "\n    ".join(lines)
+
 
 def _render_dependencies(edges: List[Dict[str, Any]], valid_ids: set[str]) -> Tuple[str, List[str]]:
     out: List[str] = []
@@ -390,6 +495,7 @@ def _render_dependencies(edges: List[Dict[str, Any]], valid_ids: set[str]) -> Tu
         else:
             warns.append(f"dependencia ignorada: {u} >> {d} (task inexistente)")
     return ("\n    ".join(out), warns)
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Normalización y dedupe (evita “task_id duplicado”)
@@ -412,6 +518,7 @@ def _dedupe_task_ids(tasks: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]],
     warnings = [f"task_id duplicado ajustado: {k} -> {k}_2..{v}" for k, v in seen.items() if v > 1]
     return out, warnings
 
+
 def _normalize_spec(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     spec = dict(spec or {})
     spec["dag_id"] = _sanitize_id(spec.get("dag_id") or "dag_generated")
@@ -422,6 +529,7 @@ def _normalize_spec(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     tasks, w = _dedupe_task_ids(spec.get("tasks") or [])
     spec["tasks"] = tasks
     return spec, w
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Generación final del DAG
@@ -442,6 +550,10 @@ def build_dag_code(spec: Dict[str, Any]) -> str:
         y, m, d = 2025, 1, 1
 
     schedule = spec.get("schedule") or "@daily"
+
+    multi_crons: List[str] | None = None
+    if isinstance(schedule, str) and schedule.startswith("MULTI|"):
+        multi_crons = [p.strip() for p in schedule[len("MULTI|"):].split("||") if p.strip()]
     start_hour = 0
     start_minute = 0
     if schedule == "@once" and spec.get("start_time"):
@@ -487,12 +599,18 @@ def build_dag_code(spec: Dict[str, Any]) -> str:
         else f"datetime({y}, {m}, {d}, tzinfo=local_tz)"
     )
 
+    # schedule_render (permite MULTI cron)
+    timetable_support = ""
+    schedule_render = f'"{schedule}"'
+    if multi_crons:
+        timetable_support = _MULTI_CRON_SUPPORT
+        schedule_render = f"MultiCronTimetable(crons={json.dumps(multi_crons)}, timezone=\"{timezone}\")"
     # Código final
-    code = f'''{warnings_block}{header}
+    code = f'''{warnings_block}{header}{timetable_support}
 local_tz = pendulum.timezone("{timezone}")
 
 default_args = {{
-    "owner": "{spec.get("owner","owner")}",
+    "owner": "{spec.get("owner", "owner")}",
     "retries": {retries},
     "retry_delay": timedelta(minutes={retry_minutes})
 }}
@@ -501,7 +619,7 @@ default_args = {{
     dag_id="{dag_id}",
     description="{description}",
     start_date={start_date_render},
-    schedule="{schedule}",
+    schedule={schedule_render},
     catchup={str(catchup)},
     default_args=default_args,
     tags=[{tags_list}]
