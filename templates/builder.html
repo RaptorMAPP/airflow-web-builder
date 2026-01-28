@@ -30,21 +30,9 @@
                 radial-gradient(var(--border) 1px, transparent 0) 8px 8px/16px 16px;
               margin-top:8px; }
   .form-grid-4 { display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:12px; }
-  .preview-box{
-    white-space: pre-wrap;        /* respeta saltos y permite wrap */
-    overflow-wrap: anywhere;      /* corta palabras largas */
-    word-break: break-word;
-    max-height: 160px;            /* ajusta a gusto */
-    overflow: auto;               /* scroll si se pasa */
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    font-size: 12px;
-    line-height: 1.35;
-    padding: 10px;
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-
-  }
+  #out_code, #out_val { max-height:520px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
 </style>
+
 <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
 {% endblock %}
 
@@ -81,11 +69,11 @@
             <input id="owner" value="data-team"/>
           </div>
           <div>
-            <label>Aplicación</label>
+            <label>Tag: Aplicación</label>
             <input id="app" placeholder="(opcional)"/>
           </div>
           <div>
-            <label>Sub-aplicación</label>
+            <label>Tag: Sub-aplicación</label>
             <input id="subapp" placeholder="(opcional)"/>
           </div>
         </div>
@@ -104,10 +92,23 @@
         <div style="display:flex;gap:.5rem;align-items:center;margin-top:12px;">
           <input id="catchup" type="checkbox"/><label for="catchup">catchup</label>
         </div>
+      </div>
 
-        <div style="margin-top:12px;">
-          <label>Tags (coma)</label>
-          <input id="tags" placeholder="etl, sales"/>
+      <div class="section-card" style="margin-top:12px;">
+        <h3 style="margin-top:0;">Parámetros y argumentos (global)</h3>
+        <div class="muted-note">Centraliza <b>params</b> (templating Jinja) y <b>argsets</b> (argumentos reutilizables). Luego los asignas por tarea en <b>Dependencies</b>.</div>
+
+        <div class="form-grid-2" style="margin-top:10px;">
+          <div>
+            <h4 style="margin:0 0 6px;">Params (Jinja)</h4>
+            <div id="global_params"></div>
+            <div class="muted-note">Se renderiza como <code>params={...}</code> en el operador. Ej: <code>fecha</code> = <code>{{ ds }}</code></div>
+          </div>
+          <div>
+            <h4 style="margin:0 0 6px;">Argsets (para scripts/comandos)</h4>
+            <div id="global_argsets"></div>
+            <div class="muted-note">Se aplican a <code>command</code>/<code>bash_command</code> según el operador. Ej: <code>-r -c il_logs 3 *.log /ruta/origen /ruta/destino</code></div>
+          </div>
         </div>
       </div>
     </section>
@@ -126,6 +127,8 @@
           <div>
             <label>Schedule</label>
             <select id="schedule_kind">
+                            <option value="@none">@none (Sin schedule)</option>
+<option value="@calendar">@calendar (calendario custom)</option>
               <option value="@once">@once (una sola vez)</option>
               <option value="@times">@times (horarios específicos)</option>
               <option value="@hourly">@hourly</option>
@@ -140,6 +143,23 @@
 
         <!-- Campos específicos -->
         <div id="sched_fields" style="margin-top:12px;">
+          <!-- Calendario custom (tipo Control-M) -->
+            <div class="form-grid-2 only-calendar" style="display:none; margin-top:8px;">
+              <div>
+                <label>Calendario</label>
+                <select id="calendar_name"></select>
+                <div class="muted-note">
+                  Usa un calendario definido en el menú <b>📅 Calendarios</b>. Se aplica sobre los días y este panel define la hora.
+                </div>
+              </div>
+              <div style="display:flex; gap:8px; align-items:end;">
+                <button id="btn_reload_calendars" class="button ghost" type="button">Recargar</button>
+                <a class="button secondary" href="/calendars"
+                   style="text-decoration:none; display:inline-flex; align-items:center; justify-content:center;">
+                  Gestionar
+                </a>
+              </div>
+            </div>
 
           <!-- TIMES (horarios específicos) -->
           <div class="only-times" style="display:none; margin-top:8px;">
@@ -304,6 +324,14 @@
               <input id="sched_tz" type="text" value="America/Santiago">
             </div>
           </div>
+          <div style="display:flex;gap:.5rem;align-items:center;margin-top:12px;">
+            <input id="confirm_on" type="checkbox"/>
+            <label for="confirm_on"><b>Confirm (manual)</b> — no iniciar hasta aprobación</label>
+          </div>
+          <div class="muted-note">
+            Si está activo, se agrega una tarea sensor <code>confirm</code> al inicio que espera una Variable por <code>run_id</code> antes de continuar.
+          </div>
+
 
           <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
             <button id="btn_build_cron" class="button">Generar cron</button>
@@ -352,7 +380,58 @@
           <button id="add_extdep" class="button" style="margin-top:8px;">+ Dependencia externa</button>
           <p class="muted-note">Crea un <code>ExternalTaskSensor</code> y lo encadena con una tarea local.</p>
         </div>
-      </div>
+
+        <div class="section-card">
+          <h3 style="margin-top:0;">Assets (condiciones tipo Control-M)</h3>
+          <label style="display:flex;gap:10px;align-items:center;">
+            <input type="checkbox" id="assets_on">
+            <span>Habilitar Assets (condiciones entre DAGs)</span>
+          </label>
+          <p class="muted-note" style="margin-top:6px;">
+            Define qué tasks <b>publican</b> Assets (outlets) y qué tasks los <b>consumen</b> (inlets).
+            Si está habilitado, el DAG puede dispararse por Assets además del schedule seleccionado (se usa <code>AssetOrTimeSchedule</code>).
+          </p>
+
+          <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+            <div>
+              <label>Combinación de Assets</label>
+              <select id="asset_logic" style="width:190px;">
+                <option value="OR">OR (cualquiera)</option>
+                <option value="AND">AND (todos)</option>
+              </select>
+            </div>
+            <div style="flex:1; min-width:260px;">
+              <label>Prefijo para auto-generar URI</label>
+              <input id="asset_prefix" placeholder="asset://cond/" value="asset://cond/">
+            </div>
+          </div>
+
+          <hr style="border:none;border-top:1px solid rgba(255,255,255,.12); margin:12px 0;">
+
+          <h4 style="margin:0 0 6px 0;">Inlets (Assets que consume)</h4>
+          <div id="asset_inlets"></div>
+          <button id="add_asset_inlet" class="button ghost" style="margin-top:6px;">+ Inlet</button>
+
+          <h4 style="margin:14px 0 6px 0;">Outlets (Assets que publica)</h4>
+          <div id="asset_outlets"></div>
+          <button id="add_asset_outlet" class="button ghost" style="margin-top:6px;">+ Outlet</button>
+        </div>
+
+
+    </div>
+    <div class="section-card">
+          <h3 style="margin-top:0;">Recursos (Pools / Control-M)</h3>
+          <div id="resdeps"></div>
+          <p class="muted-note" style="margin-top:8px;">Asigna recursos por tarea (cuantitativo/exclusivo). Airflow aplica 1 pool por task: marca uno como aplicado.</p>
+    </div>
+
+    <div class="section-card">
+          <h3 style="margin-top:0;">Args / Params por tarea</h3>
+          <div id="argdeps"></div>
+          <p class="muted-note" style="margin-top:8px;">Asigna un <b>argset</b> + args extra (se agrega a <code>command</code>/<code>bash_command</code> cuando aplique) y/o <b>params</b> (se pasa como <code>params</code> a cualquier operador).</p>
+    </div>
+
+
     </section>
   </div>
 </div>
@@ -373,7 +452,7 @@
     <button class="button secondary" id="btn_show_code">Código</button>
     <button class="button secondary" id="btn_show_val">Validación</button>
   </div>
-  <pre id="out_code" class="preview-box">—</pre>
+  <pre id="out_code">—</pre>
   <pre id="out_val" style="display:none">—</pre>
 </div>
 {% endblock %}
@@ -390,7 +469,8 @@
 
 {% block scripts %}
 <script>
-window.addEventListener('DOMContentLoaded', () => {
+(function initBuilder(){
+  const main = () => {
 /* ===== Tabs ===== */
 (function(){
   const KEY='builder:lastTab';
@@ -424,11 +504,215 @@ function normId(v){ let s=String(v||"").trim().replace(/\s+/g,"_"); s=s.replace(
 function ensureUniqueTaskIds(tasks){ const seen=new Map(); return tasks.map(t=>{ const base=normId(t.task_id); let id=base; if(seen.has(base)){ const n=seen.get(base)+1; seen.set(base,n); id=`${base}_${n}` } else { seen.set(base,1) } return {...t, task_id:id}; }); }
 
 /* ===== Scheduling (único control) ===== */
-window.builderState = window.builderState || { schedule: "@daily", timezone: "America/Santiago" };
+window.builderState = window.builderState || { schedule: "@daily", timezone: "America/Santiago", params: {}, argsets: {} };
+
+/* ===== Params/Argsets (global) ===== */
+function _tokenizeArgs(raw){
+  const s = String(raw||'').trim();
+  if(!s) return [];
+  // respeta tokens entre comillas dobles
+  const out=[];
+  const reTok=/"([^"]*)"|(\S+)/g;
+  let m;
+  while((m=reTok.exec(s))!==null){ out.push((m[1]!==undefined)?m[1]:m[2]); }
+  return out;
+}
+
+function initGlobalParamsPanel(){
+  const host = document.getElementById('global_params');
+  if(!host) return null;
+
+  const box = el('div', {style:'display:flex; flex-direction:column; gap:10px;'});
+  const form = el('div', {style:'display:grid; grid-template-columns: 180px 1fr 140px; gap:8px; align-items:end;'});
+
+  const kDiv = el('div', {});
+  kDiv.appendChild(el('label', {}, 'key'));
+  const kInp = el('input', {placeholder:'fecha'});
+  kDiv.appendChild(kInp);
+
+  const vDiv = el('div', {});
+  vDiv.appendChild(el('label', {}, 'value'));
+  const vInp = el('input', {placeholder:'{{ ds }}'});
+  vDiv.appendChild(vInp);
+
+  const bDiv = el('div', {});
+  bDiv.appendChild(el('label', {}, ''));
+  const addBtn = el('button', {class:'button ghost', type:'button'}, '+ Agregar');
+  bDiv.appendChild(addBtn);
+
+  form.appendChild(kDiv); form.appendChild(vDiv); form.appendChild(bDiv);
+  box.appendChild(form);
+
+  const list = el('div', {style:'display:flex; flex-direction:column; gap:6px;'});
+  box.appendChild(list);
+  host.appendChild(box);
+
+  function render(){
+    const params = window.builderState.params || (window.builderState.params = {});
+    list.innerHTML = '';
+    const keys = Object.keys(params);
+    if(!keys.length){
+      list.appendChild(el('div',{class:'muted-note'}, '(sin params)'));
+      return;
+    }
+    keys.sort().forEach((k)=>{
+      const row = el('div', {style:'display:grid; grid-template-columns: 180px 1fr 120px; gap:8px; align-items:center; padding:8px; border:1px solid var(--border); border-radius:12px; background:var(--panel-alt);'});
+      const kk = el('input', {value:k});
+      const vv = el('input', {value:String(params[k] ?? '')});
+      const rm = el('button', {class:'button ghost', type:'button'}, 'Quitar');
+
+      function saveKey(){
+        const nk = (kk.value||'').trim();
+        if(!nk) return;
+        if(nk !== k){
+          const val = params[k];
+          delete params[k];
+          params[nk] = val;
+        }
+        params[kk.value.trim()] = vv.value;
+        window.builderState.params = params;
+        render();
+      }
+      function saveVal(){
+        params[kk.value.trim() || k] = vv.value;
+        window.builderState.params = params;
+      }
+      kk.addEventListener('change', saveKey);
+      vv.addEventListener('input', saveVal);
+      rm.addEventListener('click', ()=>{ delete params[k]; window.builderState.params = params; render(); });
+
+      row.appendChild(kk); row.appendChild(vv); row.appendChild(rm);
+      list.appendChild(row);
+    });
+  }
+
+  addBtn.addEventListener('click', ()=>{
+    const k = (kInp.value||'').trim();
+    if(!k) return;
+    const params = window.builderState.params || (window.builderState.params = {});
+    params[k] = vInp.value || '';
+    window.builderState.params = params;
+    kInp.value=''; vInp.value=''; kInp.focus();
+    render();
+  });
+
+  render();
+  return { render };
+}
+
+function initGlobalArgsetsPanel(){
+  const host = document.getElementById('global_argsets');
+  if(!host) return null;
+
+  const box = el('div', {style:'display:flex; flex-direction:column; gap:10px;'});
+  const form = el('div', {style:'display:grid; grid-template-columns: 220px 1fr 140px; gap:8px; align-items:end;'});
+
+  const nDiv = el('div', {});
+  nDiv.appendChild(el('label', {}, 'nombre'));
+  const nInp = el('input', {placeholder:'SPLIT_FILE'});
+  nDiv.appendChild(nInp);
+
+  const aDiv = el('div', {});
+  aDiv.appendChild(el('label', {}, 'args (texto o JSON)'));
+  const aInp = el('input', {placeholder:'-r -c il_logs 3 *.log /ruta/origen /ruta/destino'});
+  aDiv.appendChild(aInp);
+
+  const bDiv = el('div', {});
+  bDiv.appendChild(el('label', {}, ''));
+  const addBtn = el('button', {class:'button ghost', type:'button'}, '+ Agregar');
+  bDiv.appendChild(addBtn);
+
+  form.appendChild(nDiv); form.appendChild(aDiv); form.appendChild(bDiv);
+  box.appendChild(form);
+
+  const list = el('div', {style:'display:flex; flex-direction:column; gap:6px;'});
+  box.appendChild(list);
+  host.appendChild(box);
+
+  function parseArgset(raw){
+    const s = String(raw||'').trim();
+    if(!s) return [];
+    if((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'))){
+      try{ return JSON.parse(s); }catch(_){ /* cae */ }
+    }
+    return _tokenizeArgs(s);
+  }
+
+  function fmtArgset(obj){
+    if(Array.isArray(obj)) return obj.join(' ');
+    if(obj && typeof obj === 'object'){
+      try{ return JSON.stringify(obj); }catch(_){ return String(obj); }
+    }
+    return String(obj||'');
+  }
+
+  function render(){
+    const argsets = window.builderState.argsets || (window.builderState.argsets = {});
+    list.innerHTML='';
+    const names = Object.keys(argsets);
+    if(!names.length){
+      list.appendChild(el('div',{class:'muted-note'}, '(sin argsets)'));
+      if(window.__argMgr && window.__argMgr.refreshArgsets) window.__argMgr.refreshArgsets();
+      return;
+    }
+
+    names.sort().forEach((name)=>{
+      const row = el('div', {style:'display:grid; grid-template-columns: 220px 1fr 120px; gap:8px; align-items:center; padding:8px; border:1px solid var(--border); border-radius:12px; background:var(--panel-alt);'});
+      const nn = el('input', {value:name});
+      const aa = el('input', {value: fmtArgset(argsets[name])});
+      const rm = el('button', {class:'button ghost', type:'button'}, 'Quitar');
+
+      function save(){
+        const newName = (nn.value||'').trim();
+        if(!newName) return;
+        const parsed = parseArgset(aa.value);
+        if(newName !== name){
+          const old = argsets[name];
+          delete argsets[name];
+          argsets[newName] = parsed;
+        }else{
+          argsets[name] = parsed;
+        }
+        window.builderState.argsets = argsets;
+        if(window.__argMgr && window.__argMgr.refreshArgsets) window.__argMgr.refreshArgsets();
+      }
+
+      nn.addEventListener('change', ()=>{ save(); render(); });
+      aa.addEventListener('change', save);
+      rm.addEventListener('click', ()=>{ delete argsets[name]; window.builderState.argsets = argsets; render(); });
+
+      row.appendChild(nn); row.appendChild(aa); row.appendChild(rm);
+      list.appendChild(row);
+    });
+
+    if(window.__argMgr && window.__argMgr.refreshArgsets) window.__argMgr.refreshArgsets();
+  }
+
+  addBtn.addEventListener('click', ()=>{
+    const name = (nInp.value||'').trim();
+    if(!name) return;
+    const argsets = window.builderState.argsets || (window.builderState.argsets = {});
+    argsets[name] = parseArgset(aInp.value);
+    window.builderState.argsets = argsets;
+    nInp.value=''; aInp.value=''; nInp.focus();
+    render();
+  });
+
+  render();
+  return { render };
+}
+
+window.__globalParamsMgr = initGlobalParamsPanel();
+window.__globalArgsetsMgr = initGlobalArgsetsPanel();
+
 
 function showSchedGroups(kind){
-  const all = ['only-once','only-times','only-hourly','only-daily','only-weekly','only-monthly','only-yearly'];
+  const all = ['only-calendar','only-once','only-times','only-hourly','only-daily','only-weekly','only-monthly','only-yearly'];
   all.forEach(cls => document.querySelectorAll('.'+cls).forEach(el => el.style.display='none'));
+
+  if (kind==='@none') { document.querySelectorAll('.only-cyclic').forEach(el=>el.style.display='none'); return; }
+
+  if (kind==='@calendar') document.querySelectorAll('.only-calendar,.only-daily').forEach(el=>el.style.display='block');
   if (kind==='@once')    document.querySelectorAll('.only-once').forEach(el=>el.style.display='block');
   if (kind==='@times')   document.querySelectorAll('.only-times').forEach(el=>el.style.display='block');
   if (kind==='@hourly')  document.querySelectorAll('.only-hourly').forEach(el=>el.style.display='block');
@@ -436,6 +720,7 @@ function showSchedGroups(kind){
   if (kind==='@weekly')  document.querySelectorAll('.only-weekly,.only-daily').forEach(el=>el.style.display='block');
   if (kind==='@monthly') document.querySelectorAll('.only-monthly,.only-daily').forEach(el=>el.style.display='block');
   if (kind==='@yearly')  document.querySelectorAll('.only-yearly,.only-daily').forEach(el=>el.style.display='block');
+
   // Cíclico solo aplica a hourly/daily/weekly/monthly/yearly
   document.querySelectorAll('.only-cyclic').forEach(el=>{
     el.style.display = (kind==='@times' || kind==='@once') ? 'none' : 'block';
@@ -446,6 +731,8 @@ function buildCronFromUI2(){
   const kind = document.getElementById('schedule_kind').value;
   const tz   = (document.getElementById('sched_tz').value || 'UTC').trim();
   window.builderState.timezone = tz;
+
+  if (kind === '@none') return 'None';
 
   // Para @once no hay cron: devolvemos @once y usamos hora en start_time
   if (kind === '@once') return '@once';
@@ -553,6 +840,23 @@ function buildCronFromUI2(){
 
   const cycMM = clamp(+document.getElementById('cyclic_at_mm')?.value || 0, 0, 59);
 
+
+  // --- Custom calendar ---
+  if (kind === '@calendar'){
+    const cal = (document.getElementById('calendar_name')?.value || '').trim();
+    const hh2 = String(isNaN(HH)?0:HH).padStart(2,'0');
+    const mm2 = String(isNaN(MM)?0:MM).padStart(2,'0');
+
+    if(!cal) return '@calendar';
+
+    // No cíclico: 1 corrida por fecha activa del calendario
+    if (!CY) return `CAL|${cal}|${hh2}:${mm2}`;
+
+    // Cíclico: varias corridas dentro de cada fecha activa del calendario
+    // Formato: CALC|<calendar>|<unit>|<N>|<from>|<to>|<at_mm>
+    return `CALC|${cal}|${unit}|${N}|${F}|${T}|${cycMM}`;
+  }
+
   // helpers para cron cíclico
   const cyclicDaily = () => {
     if (unit === 'minutes') return `*/${N} ${F}-${T} * * *`;
@@ -615,16 +919,80 @@ function buildCronFromUI2(){
   return "@daily";
 }
 
+
+async function loadCalendarsIntoSelect(preferValue){
+  const sel = document.getElementById('calendar_name');
+  if(!sel) return;
+
+  const keep = (preferValue !== undefined && preferValue !== null) ? String(preferValue) : (sel.value || '');
+  sel.innerHTML = '<option value="">— Selecciona —</option>';
+
+  try{
+    const r = await fetch('/api/calendars');
+    const data = await r.json().catch(()=>[]);
+    if(!Array.isArray(data) || !data.length){
+      sel.innerHTML = '<option value="">(sin calendarios)</option>';
+      return;
+    }
+    data.forEach(o=>{
+      const name = (o && o.name) ? String(o.name) : '';
+      if(!name) return;
+      const count = (o && o.count !== undefined) ? o.count : '';
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = count !== '' ? `${name} (${count})` : name;
+      sel.appendChild(opt);
+    });
+
+    if(keep){
+      sel.value = keep;
+    }else{
+      const first = sel.querySelector('option[value]:not([value=""])');
+      if(first) sel.value = first.value;
+    }
+  }catch(e){
+    sel.innerHTML = '<option value="">(error cargando calendarios)</option>';
+  }
+}
+
 (function initSched2(){
   const kindSel = document.getElementById('schedule_kind');
   const tz      = document.getElementById('sched_tz');
 
-  const initial = window.builderState.schedule || '@daily';
-  if (['@once','@times','@hourly','@daily','@weekly','@monthly','@yearly'].includes(initial)){
+  let initial = (window.builderState.schedule || '@daily');
+  if (typeof initial === 'string') initial = initial.trim();
+  let initialCalendar = null;
+
+  // Si viene de un DAG/spec ya generado con calendario custom
+  if (typeof initial === 'string' && initial.startsWith('CAL|')){
+    kindSel.value = '@calendar';
+    const parts = initial.split('|');
+    initialCalendar = (parts[1] || '').trim();
+
+    const hm = (parts[2] || '00:00').trim();
+    const [hhS, mmS] = hm.split(':');
+    const hh = parseInt(hhS || '0', 10);
+    const mm = parseInt(mmS || '0', 10);
+
+    const hhEl = document.getElementById('t_hh'); if(hhEl) hhEl.value = String(isNaN(hh)?0:hh);
+    const mmEl = document.getElementById('t_mm'); if(mmEl) mmEl.value = String(isNaN(mm)?0:mm);
+
+  } else if (initial === 'None') {
+    kindSel.value = '@none';
+  } else if (['@once','@times','@hourly','@daily','@weekly','@monthly','@yearly'].includes(initial)){
     kindSel.value = initial;
   } else { kindSel.value = '@daily'; }
+
   tz.value = window.builderState.timezone || tz.value || 'UTC';
 
+
+  // Cargar calendarios existentes para el selector (y mantener selección si edito un DAG existente)
+  loadCalendarsIntoSelect(initialCalendar).then(()=>{ if (typeof syncCronFromUI === 'function') syncCronFromUI(); });
+
+  document.getElementById('btn_reload_calendars')?.addEventListener('click', async ()=>{
+    await loadCalendarsIntoSelect();
+    if (typeof syncCronFromUI === 'function') syncCronFromUI();
+  });
   // Botones rápidos para @times
   function setTimesDows(mode){
     const cbs = Array.from(document.querySelectorAll('input[name="times_dow"]'));
@@ -647,7 +1015,7 @@ function buildCronFromUI2(){
 
   // Auto-sync al tocar cualquier campo de scheduling
   const schedIds = [
-    'schedule_kind','sched_tz',
+    'schedule_kind','sched_tz','calendar_name',
     't_hh','t_mm','h_mm','h_start',
     'w_dow','m_dom','y_mon','y_dom',
     'cyclic_on','cyclic_n','cyclic_unit','cyclic_at_mm','cyc_from','cyc_to',
@@ -673,7 +1041,13 @@ function buildCronFromUI2(){
         const n = cron.slice(6).split('||').filter(Boolean).length;
         cp.textContent = `MULTI (${n})`;
         cp.title = cron;
-      }else{
+      } else if (typeof cron === 'string' && cron.startsWith('CAL|')){
+        const parts = cron.split('|');
+        const cal = (parts[1] || '').trim();
+        const hm  = (parts[2] || '').trim();
+        cp.textContent = cal ? `CAL (${cal}) ${hm}` : 'CAL (sin calendario)';
+        cp.title = cron;
+      } else {
         cp.textContent = cron || '—';
         cp.title = '';
       }
@@ -701,6 +1075,113 @@ function buildCronFromUI2(){
     }
 
     try {
+      // CAL|<name>|HH:MM  (vista previa cliente-side)
+
+      // CALC|<name>|unit|N|from|to|at_mm  (vista previa cliente-side)
+      if(typeof cron === 'string' && cron.startsWith('CALC|')){
+        const parts = cron.split('|');
+        const calId = (parts[1] || '').trim();
+        const unit  = (parts[2] || 'minutes').trim();
+        const every = parseInt(parts[3] || '15', 10);
+        const wFrom = parseInt(parts[4] || '0', 10);
+        const wTo   = parseInt(parts[5] || '23', 10);
+        const atMM  = parseInt(parts[6] || '0', 10);
+
+        if(!calId){
+          document.getElementById('runs_preview').textContent = 'Selecciona un calendario.';
+          return;
+        }
+
+        const resp = await fetch(`/api/calendars/${encodeURIComponent(calId)}`);
+        const calData = await resp.json().catch(()=>({}));
+        const dates = Array.isArray(calData.dates) ? calData.dates : [];
+
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+        const nowMinutes = now.getHours()*60 + now.getMinutes();
+
+        const clamp = (x,min,max)=>Math.min(max,Math.max(min,x));
+        const F = clamp(Math.min(wFrom,wTo), 0, 23);
+        const T = clamp(Math.max(wFrom,wTo), 0, 23);
+        const out = [];
+
+        const pushCandidate = (d, hh, mm) => {
+          const dt = new Date(`${d}T${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`);
+          out.push(dt.toISOString());
+        };
+
+        // generar candidatos por cada fecha del calendario, tomar próximos 5 desde "ahora"
+        for(const d of dates){
+          if(d < today) continue;
+
+          if(unit === 'hours'){
+            const step = clamp(isNaN(every)?2:every, 1, 23);
+            const mm = clamp(isNaN(atMM)?0:atMM, 0, 59);
+
+            for(let hh=F; hh<=T; hh+=step){
+              if(d === today){
+                const candMin = hh*60 + mm;
+                if(candMin < nowMinutes) continue;
+              }
+              pushCandidate(d, hh, mm);
+              if(out.length >= 20) break;
+            }
+          } else {
+            const step = clamp(isNaN(every)?15:every, 1, 59);
+            for(let hh=F; hh<=T; hh++){
+              for(let mm=0; mm<60; mm+=step){
+                if(d === today){
+                  const candMin = hh*60 + mm;
+                  if(candMin < nowMinutes) continue;
+                }
+                pushCandidate(d, hh, mm);
+                if(out.length >= 20) break;
+              }
+              if(out.length >= 20) break;
+            }
+          }
+
+          if(out.length >= 20) break;
+        }
+
+        document.getElementById('runs_preview').textContent = out.slice(0,5).join('\n') || 'Sin próximas ejecuciones (según calendario).';
+        return;
+      }
+
+if(typeof cron === 'string' && cron.startsWith('CAL|')){
+        const parts = cron.split('|');
+        const calId = (parts[1] || '').trim();
+        const hm    = (parts[2] || '00:00').trim();
+        if(!calId){
+          document.getElementById('runs_preview').textContent = 'Selecciona un calendario';
+          return;
+        }
+        const [hhS, mmS] = hm.split(':');
+        const hh = parseInt(hhS || '0', 10);
+        const mm = parseInt(mmS || '0', 10);
+
+        const resp = await fetch(`/api/calendars/${encodeURIComponent(calId)}`);
+        const calData = await resp.json().catch(()=>({}));
+        const dates = Array.isArray(calData.dates) ? calData.dates : [];
+
+        // Tomar próximos 5 desde hoy (asumiendo TZ del navegador ~ sched_tz)
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+        const nowMinutes = now.getHours()*60 + now.getMinutes();
+        const schMinutes = (isNaN(hh)?0:hh)*60 + (isNaN(mm)?0:mm);
+
+        const out = [];
+        for(const d of dates){
+          if(d < today) continue;
+          if(d === today && nowMinutes >= schMinutes) continue;
+          out.push(`${d} ${String(isNaN(hh)?0:hh).padStart(2,'0')}:${String(isNaN(mm)?0:mm).padStart(2,'0')}:00`);
+          if(out.length >= 5) break;
+        }
+
+        document.getElementById('runs_preview').textContent = out.length ? out.join('  ·  ') : '—';
+        return;
+      }
+
       // MULTI|cron1||cron2...
       if(typeof cron === 'string' && cron.startsWith('MULTI|')){
         const parts = cron.slice(6).split('||').map(s=>s.trim()).filter(Boolean);
@@ -770,6 +1251,16 @@ function refreshTaskSelects(){
   document.querySelectorAll('#extdeps select[data-k="downstream"]').forEach(sel=>{
     const v=sel.value; sel.innerHTML=""; ids.forEach(id=>sel.appendChild(el("option",{value:id},id))); if(ids.includes(v)) sel.value=v;
   });
+
+  document.querySelectorAll('#asset_inlets select[data-k="task_id"], #asset_outlets select[data-k="task_id"]').forEach(sel=>{
+    const v=sel.value; sel.innerHTML=""; ids.forEach(id=>sel.appendChild(el("option",{value:id},id))); if(ids.includes(v)) sel.value=v;
+  });
+  if(window.__resMgr && typeof window.__resMgr.refresh === 'function'){
+    window.__resMgr.refresh(ids);
+  }
+  if(window.__argMgr && typeof window.__argMgr.refresh === 'function'){
+    window.__argMgr.refresh(ids);
+  }
 }
 function addTask(type){
   const wrap = el("div",{class:"section-card"});
@@ -780,6 +1271,10 @@ function addTask(type){
   idInput.addEventListener('change', refreshTaskSelects);
   wrap.appendChild(idInput);
   wrap.appendChild(el("input",{"type":"hidden","data-k":"type",value:type}));
+  // args/params centralizados (se asignan desde Dependencies)
+  wrap.appendChild(el("input",{"type":"hidden","data-k":"argset_ref",value:""}));
+  wrap.appendChild(el("input",{"type":"hidden","data-k":"append_args",value:""}));
+  wrap.appendChild(el("input",{"type":"hidden","data-k":"params",value:""}));
 
   const add = (label, key, ph="", long=false) => {
     wrap.appendChild(el("label",{},label));
@@ -787,7 +1282,164 @@ function addTask(type){
     else { wrap.appendChild(el("input",{"data-k":key,placeholder:ph})); }
   };
 
-  if(type==="BashOperator"){ add("bash_command","bash_command","echo 'hola'"); }
+  if(type==="BashOperator"){
+    const help = el("div",{class:"muted-note"}, "Ejecuta bash_command. Puedes elegir comando directo o construir un script + argumentos.");
+    wrap.appendChild(help);
+
+    wrap.appendChild(el("label",{},"tipo de ejecucion"));
+    const modeSel = el("select",{"data-ui":"bash_mode"});
+    modeSel.innerHTML = '<option value="command" selected>comando</option><option value="script">script</option>';
+    wrap.appendChild(modeSel);
+
+    const scriptBox = el("div",{style:"margin-top:8px; padding:12px; border:1px dashed var(--border); border-radius:12px; display:none;"});
+    scriptBox.appendChild(el("div",{class:"muted-note"},"Si eliges script: indica ruta + script + args. El bash_command se autogenera."));
+
+    const sg = el("div",{class:"form-grid-2", style:"margin-top:8px;"});
+    const dirDiv = el("div",{});
+    const fileDiv = el("div",{});
+    const dirInp = el("input",{placeholder:"/opt/jobs"});
+    const fileInp = el("input",{placeholder:"mi_script.sh / .ksh"});
+    dirDiv.appendChild(el("label",{},"ruta (directorio)"));
+    dirDiv.appendChild(dirInp);
+    fileDiv.appendChild(el("label",{},"script (archivo)"));
+    fileDiv.appendChild(fileInp);
+    sg.appendChild(dirDiv);
+    sg.appendChild(fileDiv);
+    scriptBox.appendChild(sg);
+
+    const sg2 = el("div",{class:"form-grid-2", style:"margin-top:8px;"});
+    const shDiv = el("div",{});
+    const argsDiv = el("div",{});
+    shDiv.appendChild(el("label",{},"intérprete"));
+    const shSel = el("select",{style:"width:100%;"});
+    shSel.innerHTML = '<option value="bash" selected>bash</option><option value="sh">sh</option><option value="ksh">ksh</option><option value="direct">directo (./script)</option>';
+    shDiv.appendChild(shSel);
+
+    const argsInp = el("input",{placeholder:"-r -c il_logs 3 *.log (opcional)"});
+    argsDiv.appendChild(el("label",{},"argumentos (opcional)"));
+    argsDiv.appendChild(argsInp);
+
+    sg2.appendChild(shDiv);
+    sg2.appendChild(argsDiv);
+    scriptBox.appendChild(sg2);
+
+    const cdChk = el("input",{type:"checkbox"});
+    cdChk.checked = true;
+    const cdRow = el("div",{style:"display:flex; gap:8px; align-items:center; margin-top:8px;"});
+    cdRow.appendChild(cdChk);
+    cdRow.appendChild(el("span",{class:"muted-note"},"ejecutar desde la ruta (cd)"));
+    scriptBox.appendChild(cdRow);
+
+    // Params builder -> se concatenan como args
+    const parmBox = el("div",{style:"margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:12px; background:var(--panel-alt);"});
+    parmBox.appendChild(el("div",{class:"muted-note"},"Agrega parametros (PARM1..PARMn). Se concatenan como argumentos al final del script."));
+    const pRow = el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;"});
+    const pK = el("input",{placeholder:"PARM1", style:"min-width:160px;"});
+    const pV = el("input",{placeholder:"valor", style:"min-width:220px; flex:1;"});
+    const pAdd = el("button",{class:"button ghost", type:"button"},"+ Agregar");
+    pRow.appendChild(pK); pRow.appendChild(pV); pRow.appendChild(pAdd);
+    const pList = el("div",{style:"margin-top:8px; display:flex; flex-direction:column; gap:6px;"});
+    parmBox.appendChild(pRow); parmBox.appendChild(pList);
+    const spTA = el("textarea",{"data-k":"script_params", style:"display:none; height:72px;"},"{}");
+    scriptBox.appendChild(parmBox);
+    scriptBox.appendChild(pList);
+    scriptBox.appendChild(spTA);
+
+    const btnGen = el("button",{class:"button ghost", type:"button", style:"margin-top:8px;"},"Construir bash_command");
+    scriptBox.appendChild(btnGen);
+
+    wrap.appendChild(scriptBox);
+
+    wrap.appendChild(el("label",{},"bash_command"));
+    const cmdTA = el("textarea",{"data-k":"bash_command",style:"height:88px;"},"echo 'hola'");
+    wrap.appendChild(cmdTA);
+
+    const manualRow = el("div",{style:"display:flex; gap:10px; align-items:center; margin-top:6px;"});
+    const manualChk = el("input",{type:"checkbox"});
+    manualRow.appendChild(manualChk);
+    manualRow.appendChild(el("span",{class:"muted-note"},"Editar bash_command manualmente (solo aplica si elegiste script)"));
+    wrap.appendChild(manualRow);
+
+    function paramsFromUI(){
+      const rows = Array.from(pList.querySelectorAll('[data-p-row="1"]'));
+      const pairs = [];
+      rows.forEach(r=>{
+        const k = (r.querySelector('[data-p-k]')?.value || '').trim();
+        const v = (r.querySelector('[data-p-v]')?.value || '').trim();
+        if(k && v !== '') pairs.push([k,v]);
+      });
+      const allParm = pairs.length && pairs.every(([k,_]) => /^PARM\d+$/i.test(k));
+      if(allParm){
+        pairs.sort((a,b)=> parseInt(a[0].slice(4),10) - parseInt(b[0].slice(4),10));
+      }
+      const obj = {}; pairs.forEach(([k,v])=>{ obj[k]=v; });
+      return {pairs, obj};
+    }
+    function syncParamsToHidden(){
+      const {obj} = paramsFromUI();
+      spTA.value = JSON.stringify(obj);
+    }
+    function argsFromParams(){
+      const {pairs} = paramsFromUI();
+      return pairs.map(([_,v])=> String(v).trim()).filter(Boolean).join(' ');
+    }
+    function buildCommandFromScript(){
+      const dir = (dirInp.value || '').trim();
+      const file = (fileInp.value || '').trim();
+      const interp = shSel.value;
+      const args = (argsInp.value || '').trim();
+      if(!file){ return; }
+      const safeDir = dir.replace(/"/g,'\\"');
+      const safeFile = file.replace(/"/g,'\\"');
+      const exe = (interp === 'direct') ? `./${safeFile}` : `${interp} "./${safeFile}"`;
+      let cmd = exe + (args ? ` ${args}` : '');
+      if(dir && cdChk.checked){ cmd = `cd "${safeDir}" && ${cmd}`; }
+      cmdTA.value = cmd;
+    }
+    function syncAll(){
+      syncParamsToHidden();
+      argsInp.value = argsFromParams();
+      if(modeSel.value === 'script' && !manualChk.checked){ buildCommandFromScript(); }
+    }
+    function addParamRow(k,v){
+      const row = el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap;", "data-p-row":"1"});
+      const kk = el("input",{"data-p-k":"1", style:"min-width:160px;", value: k || ''});
+      const vv = el("input",{"data-p-v":"1", style:"min-width:220px; flex:1;", value: v || ''});
+      const rm = el("button",{class:"button ghost", type:"button"},"Quitar");
+      rm.addEventListener('click', ()=>{ row.remove(); syncAll(); });
+      kk.addEventListener('input', syncAll);
+      vv.addEventListener('input', syncAll);
+      row.appendChild(kk); row.appendChild(vv); row.appendChild(rm);
+      pList.appendChild(row);
+      syncAll();
+    }
+    pAdd.addEventListener('click', ()=>{
+      const kk = (pK.value || '').trim();
+      if(!kk) return;
+      addParamRow(kk, pV.value || '');
+      pK.value=''; pV.value='';
+      pK.focus();
+    });
+
+    function applyMode(){
+      const isScript = modeSel.value === 'script';
+      scriptBox.style.display = isScript ? 'block' : 'none';
+      manualRow.style.display = isScript ? 'flex' : 'none';
+      if(!isScript){ cmdTA.readOnly = false; return; }
+      cmdTA.readOnly = !manualChk.checked;
+      if(!manualChk.checked) buildCommandFromScript();
+    }
+
+    modeSel.addEventListener('change', applyMode);
+    manualChk.addEventListener('change', applyMode);
+    [dirInp, fileInp, argsInp].forEach(inp=>inp.addEventListener('input', ()=>{ if(modeSel.value==='script' && !manualChk.checked) buildCommandFromScript(); }));
+    shSel.addEventListener('change', ()=>{ if(modeSel.value==='script' && !manualChk.checked) buildCommandFromScript(); });
+    cdChk.addEventListener('change', ()=>{ if(modeSel.value==='script' && !manualChk.checked) buildCommandFromScript(); });
+    btnGen.addEventListener('click', ()=>{ if(modeSel.value==='script') buildCommandFromScript(); });
+
+    applyMode();
+  }
+
   if(type==="PythonOperator"){ add("python_callable_name","python_callable_name","my_callable"); add("python_callable_body","python_callable_body","print('Hello')",true); }
   if(type==="SqliteOperator"){ add("sqlite_conn_id","sqlite_conn_id","sqlite_default"); add("sql","sql","SELECT 1;"); }
   if(type==="PostgresOperator"){ add("postgres_conn_id","postgres_conn_id","postgres_default"); add("sql","sql","SELECT 1;"); }
@@ -1157,67 +1809,116 @@ wrap.appendChild(varBox);
   }
 
   if(type==="WinRMOperator"){
-    const help = el("div",{class:"muted"}, "Ejecuta comando en Windows por WinRM (usa Connection winrm_conn_id).");
+    const help = el("div",{class:"muted-note"}, "Ejecuta comando en Windows por WinRM (usa Connection winrm_conn_id). Puedes elegir comando directo o script.");
     wrap.appendChild(help);
+
     wrap.appendChild(el("label",{},"winrm_conn_id"));
     wrap.appendChild(el("input",{"data-k":"winrm_conn_id",placeholder:"winrm_default"}));
-    wrap.appendChild(el("label",{},"command (PowerShell o cmd)"));
-    wrap.appendChild(el("textarea",{"data-k":"command",style:"height:88px;"},"Write-Output 'hola'"));
+
     wrap.appendChild(el("label",{},"powershell"));
-    const sel = el("select",{"data-k":"powershell"}); sel.innerHTML='<option value="true">true</option><option value="false">false</option>'; wrap.appendChild(sel);
+    const psSel = el("select",{"data-k":"powershell"});
+    psSel.innerHTML='<option value="true" selected>true</option><option value="false">false</option>';
+    wrap.appendChild(psSel);
+
+    wrap.appendChild(el("label",{},"tipo de ejecucion"));
+    const modeSel = el("select",{"data-ui":"winrm_mode"});
+    modeSel.innerHTML = '<option value="command" selected>comando</option><option value="script">script</option>';
+    wrap.appendChild(modeSel);
+
+    const scriptBox = el("div",{style:"margin-top:8px; padding:12px; border:1px dashed var(--border); border-radius:12px; display:none;"});
+    scriptBox.appendChild(el("div",{class:"muted-note"},"Si eliges script: indica ruta + script + args. El command se autogenera."));
+
+    const sg = el("div",{class:"form-grid-2", style:"margin-top:8px;"});
+    const dirDiv = el("div",{});
+    const fileDiv = el("div",{});
+    const dirInp = el("input",{placeholder:"C:\\Jobs"});
+    const fileInp = el("input",{placeholder:"mi_script.ps1 / .bat"});
+    dirDiv.appendChild(el("label",{},"ruta (directorio)"));
+    dirDiv.appendChild(dirInp);
+    fileDiv.appendChild(el("label",{},"script (archivo)"));
+    fileDiv.appendChild(fileInp);
+    sg.appendChild(dirDiv);
+    sg.appendChild(fileDiv);
+    scriptBox.appendChild(sg);
+
+    const argsInp = el("input",{placeholder:"-Param 123 -Flag (opcional)"});
+    scriptBox.appendChild(el("label",{style:"margin-top:8px;"},"argumentos (opcional)"));
+    scriptBox.appendChild(argsInp);
+
+    const cdChk = el("input",{type:"checkbox"});
+    cdChk.checked = true;
+    const cdRow = el("div",{style:"display:flex; gap:8px; align-items:center; margin-top:8px;"});
+    cdRow.appendChild(cdChk);
+    cdRow.appendChild(el("span",{class:"muted-note"},"ejecutar desde la ruta (cd)"));
+    scriptBox.appendChild(cdRow);
+
+    const btnGen = el("button",{class:"button ghost", type:"button", style:"margin-top:8px;"},"Construir command");
+    scriptBox.appendChild(btnGen);
+
+    wrap.appendChild(scriptBox);
+
+    wrap.appendChild(el("label",{},"command"));
+    const cmdTA = el("textarea",{"data-k":"command",style:"height:88px;"},"Write-Output 'hola'");
+    wrap.appendChild(cmdTA);
+
+    const manualRow = el("div",{style:"display:flex; gap:10px; align-items:center; margin-top:6px;"});
+    const manualChk = el("input",{type:"checkbox"});
+    manualRow.appendChild(manualChk);
+    manualRow.appendChild(el("span",{class:"muted-note"},"Editar command manualmente (solo aplica si elegiste script)"));
+    wrap.appendChild(manualRow);
+
+    function buildCommandFromScript(){
+      const dir = (dirInp.value || '').trim();
+      const file = (fileInp.value || '').trim();
+      const args = (argsInp.value || '').trim();
+      const ps = String(psSel.value || 'true').toLowerCase() === 'true';
+      if(!file){ return; }
+
+      const safeDir = dir.replace(/"/g,'\\"');
+      const safeFile = file.replace(/"/g,'\\"');
+
+      let cmd = '';
+      if(ps){
+        if(dir && cdChk.checked){
+          cmd = `cd \"${safeDir}\"; & \".\\\\${safeFile}\"${args ? ` ${args}` : ''}`;
+        }else if(dir){
+          const join = (safeDir.endsWith('\\\\') || safeDir.endsWith('\\')) ? safeDir : (safeDir + '\\\\');
+          cmd = `& \"${join}${safeFile}\"${args ? ` ${args}` : ''}`;
+        }else{
+          cmd = `& \"${safeFile}\"${args ? ` ${args}` : ''}`;
+        }
+      }else{
+        if(dir && cdChk.checked){
+          cmd = `cd /d \"${safeDir}\" && \"${safeFile}\"${args ? ` ${args}` : ''}`;
+        }else{
+          cmd = `\"${safeFile}\"${args ? ` ${args}` : ''}`;
+        }
+      }
+      cmdTA.value = cmd;
+    }
+
+    function applyMode(){
+      const isScript = modeSel.value === 'script';
+      scriptBox.style.display = isScript ? 'block' : 'none';
+      manualRow.style.display = isScript ? 'flex' : 'none';
+      if(!isScript){ cmdTA.readOnly = false; return; }
+      cmdTA.readOnly = !manualChk.checked;
+      if(!manualChk.checked) buildCommandFromScript();
+    }
+
+    modeSel.addEventListener('change', applyMode);
+    manualChk.addEventListener('change', applyMode);
+    psSel.addEventListener('change', ()=>{ if(modeSel.value==='script' && !manualChk.checked) buildCommandFromScript(); });
+    [dirInp, fileInp, argsInp].forEach(inp=>inp.addEventListener('input', ()=>{ if(modeSel.value==='script' && !manualChk.checked) buildCommandFromScript(); }));
+    cdChk.addEventListener('change', ()=>{ if(modeSel.value==='script' && !manualChk.checked) buildCommandFromScript(); });
+    btnGen.addEventListener('click', ()=>{ if(modeSel.value==='script') buildCommandFromScript(); });
+
+    applyMode();
   }
-
 const adv = el("details",{style:"margin-top:8px;"});
-adv.appendChild(el("summary",{}, "Recursos (Control-M) y Avanzado"));
-
-// ── Recursos (múltiples, estilo Control-M). Nota: Airflow aplica SOLO 1 pool por task.
-const resBox = el("div",{style:"margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:12px;"});
-resBox.appendChild(el("div",{class:"muted-note"},
-  "Puedes registrar más de un recurso (cuantitativo/exclusivo) para la migración desde Control-M. " +
-  "Airflow aplica solo 1 pool por task: marca uno como 'aplicado'. Los demás quedan documentados en la spec (resources)."
-));
-
-// Vista/entrada del pool aplicado (Airflow aplica 1 pool por task)
-// Aquí ingresas un recurso y lo agregas a la lista. El "aplicado" es el que está marcado como primary.
-const applied = el("div",{style:"display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:8px;margin-top:8px;align-items:end;"});
-
-const apTypeDiv = el("div",{}); apTypeDiv.appendChild(el("label",{},"tipo (aplicado)"));
-const apTypeView = el("select",{style:"width:100%;"});
-apTypeView.innerHTML = '<option value="quant" selected>Cuantitativo</option><option value="exclusive">Exclusivo</option>';
-apTypeDiv.appendChild(apTypeView);
-
-const apPoolDiv = el("div",{}); apPoolDiv.appendChild(el("label",{},"pool (aplicado)"));
-const apPoolView = el("input",{placeholder:"nombre pool / recurso", style:"width:100%;"});
-apPoolDiv.appendChild(apPoolView);
-
-const apSlotsDiv = el("div",{}); apSlotsDiv.appendChild(el("label",{},"slots (aplicados)"));
-const apSlotsView = el("input",{type:"number", min:"1", step:"1", value:"1", style:"width:100%;"});
-apSlotsDiv.appendChild(apSlotsView);
-
-const apAddDiv = el("div",{});
-apAddDiv.appendChild(el("label",{},""));
-const apAddBtn = el("button",{class:"button ghost", type:"button", style:"width:100%;"},"+ Agregar recurso");
-apAddDiv.appendChild(apAddBtn);
-
-applied.appendChild(apTypeDiv);
-applied.appendChild(apPoolDiv);
-applied.appendChild(apSlotsDiv);
-applied.appendChild(apAddDiv);
-resBox.appendChild(applied);
-
-// Alias para reutilizar la lógica existente
-const rType = apTypeView;
-const rPool = apPoolView;
-const rSlots = apSlotsView;
-const rAdd  = apAddBtn;
-
-// Lista de recursos
-const resList = el("div",{style:"margin-top:8px; display:flex; flex-direction:column; gap:6px;"});
-resBox.appendChild(resList);
-
-adv.appendChild(resBox);
-
-// Hidden fields para el generador (compatibilidad)
+adv.appendChild(el("summary",{}, "Avanzado"));
+adv.appendChild(el("div",{class:"muted-note", style:"margin-top:6px;"}, "Pool/recursos se configuran en Dependencies -> Recursos."));
+// Hidden fields para pool/pool_slots/resources (los edita el panel de Dependencies)
 const poolInp = el("input",{"data-k":"pool",style:"display:none;"});
 const slotsInp = el("input",{"data-k":"pool_slots",style:"display:none;", value:"1"});
 const resourcesTA = el("textarea",{"data-k":"resources",style:"display:none;height:72px;"}, "[]");
@@ -1225,183 +1926,26 @@ adv.appendChild(poolInp);
 adv.appendChild(slotsInp);
 adv.appendChild(resourcesTA);
 
-// ── Otros campos avanzados comunes
 const grid2 = el("div",{style:"display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:8px;margin-top:8px;"});
-
 const qWrap = el("div",{});
 qWrap.appendChild(el("label",{},"queue (opcional)"));
 qWrap.appendChild(el("input",{"data-k":"queue",placeholder:"celery queue"}));
-
 const pwWrap = el("div",{});
 pwWrap.appendChild(el("label",{},"priority_weight (opcional)"));
 pwWrap.appendChild(el("input",{"data-k":"priority_weight",type:"number",min:"1",step:"1"}));
-
 const dopWrap = el("div",{});
 dopWrap.appendChild(el("label",{},"depends_on_past"));
 const dopSel = el("select",{"data-k":"depends_on_past"});
-dopSel.innerHTML = '<option value="false" selected>false</option><option value="true">true</option>';
+dopSel.innerHTML = "<option value=\"false\" selected>false</option><option value=\"true\">true</option>";
 dopWrap.appendChild(dopSel);
-
 const tcWrap = el("div",{});
 tcWrap.appendChild(el("label",{},"task_concurrency (opcional)"));
 tcWrap.appendChild(el("input",{"data-k":"task_concurrency",type:"number",min:"1",step:"1"}));
-
 grid2.appendChild(qWrap);
 grid2.appendChild(pwWrap);
 grid2.appendChild(dopWrap);
 grid2.appendChild(tcWrap);
-
 adv.appendChild(grid2);
-
-// helpers recursos
-function _resRead(){
-  try{ return JSON.parse(resourcesTA.value || "[]") || []; } catch { return []; }
-}
-function _resWrite(list){
-  resourcesTA.value = JSON.stringify(list || []);
-}
-function _resSyncApplied(list){
-  const applied = list.find(x=>x.primary) || list[0];
-  if(applied && applied.pool){
-    poolInp.value = applied.pool;
-    slotsInp.value = String(applied.slots || 1);
-    apPoolView.value = applied.pool;
-    apSlotsView.value = String(applied.slots || 1);
-    apTypeView.value = (applied.type === "exclusive") ? "exclusive" : "quant";
-    // Ajuste slots en UI según tipo
-    if(apTypeView.value==="exclusive"){ apSlotsView.value = "1"; apSlotsView.disabled = true; }
-    else { apSlotsView.disabled = false; }
-  }else{
-    poolInp.value = "";
-    slotsInp.value = "1";
-    apPoolView.value = "";
-    apSlotsView.value = "1";
-    apTypeView.value = "quant";
-    apSlotsView.disabled = false;
-  }
-}
-
-function _resRender(){
-  const list = _resRead();
-  resList.innerHTML = "";
-  if(!list.length){
-    resList.appendChild(el("div",{class:"muted-note"},"(sin recursos configurados)"));
-    _resSyncApplied(list);
-    return;
-  }
-
-  list.forEach((it, idx)=>{
-    const row = el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px; border:1px solid var(--border); border-radius:12px; background:var(--panel-alt);"});
-    const radio = el("input",{type:"radio", name:`res_primary_${tid}`});
-    radio.checked = !!it.primary;
-
-    const type = el("span",{class:"pill"}, it.type==="exclusive" ? "Exclusivo" : "Cuantitativo");
-    const pool = el("span",{style:"min-width:220px; word-break:break-all;"}, it.pool || "");
-    const slots = el("span",{class:"muted-note"}, `slots: ${it.slots || 1}`);
-
-    const editType = el("select",{});
-    editType.innerHTML = '<option value="quant">Cuantitativo</option><option value="exclusive">Exclusivo</option>';
-    editType.value = it.type || "quant";
-
-    const editPool = el("input",{value: it.pool || "", style:"min-width:220px; flex:1;"});
-    const editSlots = el("input",{type:"number", min:"1", step:"1", value: String(it.slots || 1), style:"width:120px;"});
-    if(editType.value==="exclusive"){ editSlots.value="1"; editSlots.disabled=true; }
-
-    const rm = el("button",{class:"button ghost", type:"button"},"Quitar");
-
-    function save(){
-      const arr = _resRead();
-      const cur = arr[idx];
-      if(!cur) return;
-      cur.type = editType.value;
-      cur.pool = (editPool.value || "").trim();
-      cur.slots = (cur.type==="exclusive") ? 1 : Math.max(1, parseInt(editSlots.value||"1",10));
-      // mantener primary por radio group
-      _resWrite(arr);
-      _resSyncApplied(arr);
-      _resRender();
-    }
-
-    radio.addEventListener("change", ()=>{
-      const arr = _resRead();
-      arr.forEach((x,i)=> x.primary = (i===idx));
-      _resWrite(arr);
-      _resSyncApplied(arr);
-      _resRender();
-    });
-
-    editType.addEventListener("change", ()=>{
-      if(editType.value==="exclusive"){ editSlots.value="1"; editSlots.disabled=true; }
-      else { editSlots.disabled=false; }
-      save();
-    });
-    editPool.addEventListener("input", save);
-    editSlots.addEventListener("input", save);
-
-    rm.addEventListener("click", ()=>{
-      const arr = _resRead();
-      arr.splice(idx,1);
-      // si quitamos el primary, elegir primero
-      if(arr.length && !arr.some(x=>x.primary)) arr[0].primary = true;
-      _resWrite(arr);
-      _resSyncApplied(arr);
-      _resRender();
-    });
-
-    row.appendChild(radio);
-    row.appendChild(type);
-    row.appendChild(pool);
-    row.appendChild(slots);
-    // editor inline
-    row.appendChild(el("span",{class:"muted-note"},"→"));
-    row.appendChild(editType);
-    row.appendChild(editPool);
-    row.appendChild(editSlots);
-    row.appendChild(rm);
-
-    resList.appendChild(row);
-  });
-
-  _resSyncApplied(list);
-}
-
-function _resAdd(type,pool,slots){
-  const arr = _resRead();
-  const item = {
-    type: (type==="exclusive" ? "exclusive" : "quant"),
-    pool: (pool || "").trim(),
-    slots: (type==="exclusive" ? 1 : Math.max(1, parseInt(slots||"1",10))),
-    primary: false
-  };
-  if(!arr.length){
-    item.primary = true;
-  }
-  arr.push(item);
-  // si no hay primary, set first
-  if(arr.length && !arr.some(x=>x.primary)) arr[0].primary = true;
-  _resWrite(arr);
-  _resSyncApplied(arr);
-  _resRender();
-}
-
-// comportamiento del tipo en el form
-rType.addEventListener("change", ()=>{
-  if(rType.value==="exclusive"){ rSlots.value="1"; rSlots.disabled=true; }
-  else { rSlots.disabled=false; }
-});
-
-rAdd.addEventListener("click", ()=>{
-  const pool = (rPool.value || "").trim();
-  if(!pool) return;
-  _resAdd(rType.value, pool, rSlots.value);
-  rPool.value = "";
-  rSlots.value = "1";
-  rPool.focus();
-});
-
-// estado inicial
-_resRender();
-
 wrap.appendChild(adv);
 
   const del = el("button",{},"Eliminar");
@@ -1462,6 +2006,470 @@ function addExternalDep(){
   updateGraph();
 }
 
+
+
+/* Assets (condiciones) - panel en Dependencies */
+function makeAssetTaskSelect(selected){
+  const sel = el("select", {"data-k":"task_id", style:"width:100%;"});
+  taskIdOptions().forEach(id => sel.appendChild(el("option",{value:id}, id)));
+  if(selected) sel.value = selected;
+  return sel;
+}
+function _autoAssetUri(taskId){
+  const p = (document.getElementById('asset_prefix')?.value || 'asset://cond/').trim() || 'asset://cond/';
+  const dag = (document.getElementById('dag_id')?.value || 'dag').trim() || 'dag';
+  // Por defecto incluye dag_id + task_id para evitar colisiones. Puedes editarlo manualmente si quieres referenciar otro DAG.
+  return `${p}${dag}/${taskId}_done`;
+}
+function addAssetLinkRow(containerId, kind){
+  const wrap = el("div",{class:"section-card", style:"margin-top:8px;"});
+  wrap.appendChild(el("label",{}, "task"));
+  const sel = makeAssetTaskSelect();
+  wrap.appendChild(sel);
+
+  wrap.appendChild(el("label",{}, "asset_uri"));
+  const inp = el("input", {"data-k":"uri", placeholder:"asset://cond/<dag>/<task>_done"});
+  wrap.appendChild(inp);
+
+  const actions = el("div",{style:"display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;"});
+  const btnAuto = el("button",{class:"button ghost", type:"button"}, "Auto");
+  btnAuto.onclick = () => { inp.value = _autoAssetUri(sel.value || 'task'); };
+  const del = el("button",{class:"button ghost", type:"button"}, "Eliminar");
+  del.onclick = () => wrap.remove();
+  actions.appendChild(btnAuto);
+  actions.appendChild(del);
+  wrap.appendChild(actions);
+
+  document.getElementById(containerId).appendChild(wrap);
+}
+function setAssetsUiEnabled(on){
+  const panelIds = ['asset_logic','asset_prefix','add_asset_inlet','add_asset_outlet'];
+  panelIds.forEach(id => {
+    const elx = document.getElementById(id);
+    if(elx) elx.disabled = !on;
+  });
+  ['asset_inlets','asset_outlets'].forEach(cid=>{
+    document.querySelectorAll(`#${cid} input, #${cid} select, #${cid} button`).forEach(x=>x.disabled = !on);
+  });
+  const root = document.getElementById('assets_on')?.closest('.section-card');
+  if(root) root.style.opacity = on ? '1' : '.55';
+}
+document.getElementById('assets_on')?.addEventListener('change', (e)=>setAssetsUiEnabled(!!e.target.checked));
+document.getElementById('add_asset_inlet')?.addEventListener('click', ()=>addAssetLinkRow('asset_inlets','inlet'));
+document.getElementById('add_asset_outlet')?.addEventListener('click', ()=>addAssetLinkRow('asset_outlets','outlet'));
+
+// default UI state
+setAssetsUiEnabled(!!document.getElementById('assets_on')?.checked);
+
+
+/* Recursos (Pools) - panel en Dependencies */
+function _findTaskCardById(taskId){
+  const cards = Array.from(document.querySelectorAll('#tasks > .section-card'));
+  return cards.find(c => (c.querySelector('[data-k="task_id"]')?.value || '') === taskId);
+}
+function _resEls(taskId){
+  const card = _findTaskCardById(taskId);
+  if(!card) return null;
+  const pool = card.querySelector('[data-k="pool"]');
+  const slots = card.querySelector('[data-k="pool_slots"]');
+  const res = card.querySelector('[data-k="resources"]');
+  return {card, pool, slots, res};
+}
+function _resRead(taskId){
+  const e = _resEls(taskId);
+  if(!e || !e.res) return [];
+  try{ return JSON.parse(e.res.value || '[]') || []; }catch{ return []; }
+}
+function _resWrite(taskId, list){
+  const e = _resEls(taskId);
+  if(!e || !e.res) return;
+  e.res.value = JSON.stringify(list || []);
+  const applied = (list || []).find(x=>x.primary) || (list || [])[0];
+  if(applied && e.pool && e.slots){
+    e.pool.value = applied.pool || '';
+    e.slots.value = String(applied.slots || 1);
+  }else if(e.pool && e.slots){
+    e.pool.value = '';
+    e.slots.value = '1';
+  }
+}
+
+function initResDepsPanel(){
+  const host = document.getElementById('resdeps');
+  if(!host) return null;
+
+  const box = el('div', {style:'display:flex; flex-direction:column; gap:10px;'});
+
+  const selRow = el('div', {style:'display:grid; grid-template-columns: 220px 1fr; gap:10px; align-items:end;'});
+  const tDiv = el('div', {});
+  tDiv.appendChild(el('label', {}, 'tarea'));
+  const tSel = el('select', {id:'res_task_sel', style:'width:100%;'});
+  tDiv.appendChild(tSel);
+
+  const noteDiv = el('div', {});
+  noteDiv.appendChild(el('div', {class:'muted-note', style:'margin-bottom:4px;'}, 'Recursos al estilo Control-M. Marca 1 como aplicado (pool real en Airflow).'));
+  noteDiv.appendChild(el('div', {class:'muted-note'}, 'Exclusivo => slots=1. Cuantitativo => slots=N.'));
+
+  selRow.appendChild(tDiv);
+  selRow.appendChild(noteDiv);
+  box.appendChild(selRow);
+
+  const form = el('div', {style:'display:grid; grid-template-columns: 180px 1fr 160px 200px; gap:8px; align-items:end;'});
+
+  const typeDiv = el('div', {});
+  typeDiv.appendChild(el('label', {}, 'tipo'));
+  const typeSel = el('select', {id:'res_type', style:'width:100%;'});
+  typeSel.innerHTML = '<option value="quant" selected>Cuantitativo</option><option value="exclusive">Exclusivo</option>';
+  typeDiv.appendChild(typeSel);
+
+  const poolDiv = el('div', {});
+  poolDiv.appendChild(el('label', {}, 'recurso / pool'));
+  const poolInp = el('input', {id:'res_pool', placeholder:'POOL_NAME', style:'width:100%;'});
+  poolDiv.appendChild(poolInp);
+
+  const slotsDiv = el('div', {});
+  slotsDiv.appendChild(el('label', {}, 'slots'));
+  const slotsInp = el('input', {id:'res_slots', type:'number', min:'1', step:'1', value:'1', style:'width:100%;'});
+  slotsDiv.appendChild(slotsInp);
+
+  const btnDiv = el('div', {});
+  btnDiv.appendChild(el('label', {}, ''));
+  const addBtn = el('button', {class:'button ghost', type:'button', id:'res_add', style:'width:100%;'}, '+ Agregar');
+  btnDiv.appendChild(addBtn);
+
+  form.appendChild(typeDiv);
+  form.appendChild(poolDiv);
+  form.appendChild(slotsDiv);
+  form.appendChild(btnDiv);
+  box.appendChild(form);
+
+  const listWrap = el('div', {id:'res_list', style:'display:flex; flex-direction:column; gap:6px;'});
+  box.appendChild(listWrap);
+
+  host.appendChild(box);
+
+  let currentTask = '';
+
+  function render(){
+    listWrap.innerHTML = '';
+    if(!currentTask){
+      listWrap.appendChild(el('div', {class:'muted-note'}, '(no hay tareas)'));
+      return;
+    }
+    const arr = _resRead(currentTask);
+    if(!arr.length){
+      listWrap.appendChild(el('div', {class:'muted-note'}, '(sin recursos configurados)'));
+      return;
+    }
+
+    arr.forEach((it, idx)=>{
+      const row = el('div', {style:'display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px; border:1px solid var(--border); border-radius:12px; background:var(--panel-alt);'});
+
+      const radio = el('input', {type:'radio', name:'res_primary_global'});
+      radio.checked = !!it.primary;
+
+      const editType = el('select', {});
+      editType.innerHTML = '<option value="quant">Cuantitativo</option><option value="exclusive">Exclusivo</option>';
+      editType.value = it.type || 'quant';
+
+      const editPool = el('input', {value: it.pool || '', style:'min-width:220px; flex:1;'});
+      const editSlots = el('input', {type:'number', min:'1', step:'1', value: String(it.slots || 1), style:'width:120px;'});
+      if(editType.value==='exclusive'){
+        editSlots.value='1';
+        editSlots.disabled=true;
+      }
+
+      const rm = el('button', {class:'button ghost', type:'button'}, 'Quitar');
+
+      function save(){
+        const cur = _resRead(currentTask);
+        if(!cur[idx]) return;
+        cur[idx].type = editType.value;
+        cur[idx].pool = (editPool.value || '').trim();
+        cur[idx].slots = (cur[idx].type==='exclusive') ? 1 : Math.max(1, parseInt(editSlots.value||'1',10));
+        _resWrite(currentTask, cur);
+      }
+
+      radio.addEventListener('change', ()=>{
+        const cur = _resRead(currentTask);
+        cur.forEach((x,i)=> x.primary = (i===idx));
+        _resWrite(currentTask, cur);
+        render();
+      });
+
+      editType.addEventListener('change', ()=>{
+        if(editType.value==='exclusive'){
+          editSlots.value='1';
+          editSlots.disabled=true;
+        }else{
+          editSlots.disabled=false;
+        }
+        save();
+        render();
+      });
+      editPool.addEventListener('input', save);
+      editSlots.addEventListener('input', save);
+
+      rm.addEventListener('click', ()=>{
+        const cur = _resRead(currentTask);
+        cur.splice(idx,1);
+        if(cur.length && !cur.some(x=>x.primary)) cur[0].primary=true;
+        _resWrite(currentTask, cur);
+        render();
+      });
+
+      row.appendChild(radio);
+      row.appendChild(el('span',{class:'pill'}, editType.value==='exclusive' ? 'Exclusivo' : 'Cuantitativo'));
+      row.appendChild(editType);
+      row.appendChild(editPool);
+      row.appendChild(editSlots);
+      row.appendChild(rm);
+
+      listWrap.appendChild(row);
+    });
+  }
+
+  function setCurrentTask(tid){
+    currentTask = tid || '';
+    render();
+  }
+
+  function refresh(ids){
+    const cur = tSel.value;
+    tSel.innerHTML = '';
+    (ids || []).forEach(id=> tSel.appendChild(el('option', {value:id}, id)));
+    if(ids && ids.length){
+      if(cur && ids.includes(cur)) tSel.value = cur;
+      else tSel.value = ids[0];
+      setCurrentTask(tSel.value);
+    }else{
+      setCurrentTask('');
+    }
+  }
+
+  // type behavior
+  typeSel.addEventListener('change', ()=>{
+    if(typeSel.value==='exclusive'){
+      slotsInp.value='1';
+      slotsInp.disabled=true;
+    }else{
+      slotsInp.disabled=false;
+    }
+  });
+
+  tSel.addEventListener('change', ()=> setCurrentTask(tSel.value));
+
+  addBtn.addEventListener('click', ()=>{
+    if(!currentTask) return;
+    const pool = (poolInp.value || '').trim();
+    if(!pool) return;
+    const arr = _resRead(currentTask);
+    const item = {
+      type: (typeSel.value==='exclusive' ? 'exclusive' : 'quant'),
+      pool: pool,
+      slots: (typeSel.value==='exclusive' ? 1 : Math.max(1, parseInt(slotsInp.value||'1',10))),
+      primary: false
+    };
+    if(!arr.length) item.primary = true;
+    arr.push(item);
+    if(arr.length && !arr.some(x=>x.primary)) arr[0].primary = true;
+    _resWrite(currentTask, arr);
+    poolInp.value='';
+    slotsInp.value='1';
+    poolInp.focus();
+    render();
+  });
+
+  return { refresh, render, setCurrentTask };
+}
+
+
+
+/* Args/Params - panel en Dependencies */
+function _argEls(taskId){
+  const card = _findTaskCardById(taskId);
+  if(!card) return null;
+  return {
+    card,
+    argset: card.querySelector('[data-k="argset_ref"]'),
+    append: card.querySelector('[data-k="append_args"]'),
+    params: card.querySelector('[data-k="params"]'),
+  };
+}
+function _argRead(taskId){
+  const e=_argEls(taskId);
+  if(!e) return { argset_ref:'', append_args:'', params:{} };
+  let p={};
+  try{ p = JSON.parse(e.params?.value || '{}') || {}; }catch(_){ p = {}; }
+  return { argset_ref: e.argset?.value || '', append_args: e.append?.value || '', params: p };
+}
+function _argWrite(taskId, data){
+  const e=_argEls(taskId);
+  if(!e) return;
+  if(e.argset) e.argset.value = data.argset_ref || '';
+  if(e.append) e.append.value = data.append_args || '';
+  if(e.params) e.params.value = JSON.stringify(data.params || {});
+}
+
+function initArgsDepsPanel(){
+  const host = document.getElementById('argdeps');
+  if(!host) return null;
+
+  const box = el('div', {style:'display:flex; flex-direction:column; gap:10px;'});
+
+  const top = el('div', {style:'display:grid; grid-template-columns: 220px 220px 1fr; gap:10px; align-items:end;'});
+  const tDiv = el('div', {});
+  tDiv.appendChild(el('label', {}, 'tarea'));
+  const tSel = el('select', {id:'arg_task_sel', style:'width:100%;'});
+  tDiv.appendChild(tSel);
+
+  const aDiv = el('div', {});
+  aDiv.appendChild(el('label', {}, 'argset'));
+  const aSel = el('select', {id:'arg_argset_sel', style:'width:100%;'});
+  aDiv.appendChild(aSel);
+
+  const apDiv = el('div', {});
+  apDiv.appendChild(el('label', {}, 'args extra (append)'));
+  const apInp = el('input', {id:'arg_append', placeholder:'-x 1 --flag (opcional)', style:'width:100%;'});
+  apDiv.appendChild(apInp);
+
+  top.appendChild(tDiv); top.appendChild(aDiv); top.appendChild(apDiv);
+  box.appendChild(top);
+
+  // params editor
+  const pCard = el('div', {style:'padding:10px; border:1px dashed var(--border); border-radius:12px;'});
+  pCard.appendChild(el('div',{class:'muted-note', style:'margin-bottom:8px;'}, 'Params por tarea (merge con params globales; la tarea sobreescribe).'));
+
+  const pForm = el('div', {style:'display:grid; grid-template-columns: 180px 1fr 140px; gap:8px; align-items:end;'});
+  const pkDiv = el('div', {});
+  pkDiv.appendChild(el('label', {}, 'key'));
+  const pkInp = el('input', {placeholder:'fecha'});
+  pkDiv.appendChild(pkInp);
+
+  const pvDiv = el('div', {});
+  pvDiv.appendChild(el('label', {}, 'value'));
+  const pvInp = el('input', {placeholder:'{{ ds }}'});
+  pvDiv.appendChild(pvInp);
+
+  const pbDiv = el('div', {});
+  pbDiv.appendChild(el('label', {}, ''));
+  const pAdd = el('button', {class:'button ghost', type:'button'}, '+ Agregar');
+  pbDiv.appendChild(pAdd);
+
+  pForm.appendChild(pkDiv); pForm.appendChild(pvDiv); pForm.appendChild(pbDiv);
+  pCard.appendChild(pForm);
+
+  const pList = el('div', {id:'arg_params_list', style:'display:flex; flex-direction:column; gap:6px; margin-top:10px;'});
+  pCard.appendChild(pList);
+  box.appendChild(pCard);
+
+  host.appendChild(box);
+
+  let currentTask = '';
+  let cur = { argset_ref:'', append_args:'', params:{} };
+
+  function refreshArgsets(){
+    const argsets = window.builderState.argsets || {};
+    const curVal = aSel.value;
+    aSel.innerHTML = '';
+    aSel.appendChild(el('option', {value:''}, '(ninguno)'));
+    Object.keys(argsets).sort().forEach(name=> aSel.appendChild(el('option', {value:name}, name)));
+    if(curVal && [...aSel.options].some(o=>o.value===curVal)) aSel.value = curVal;
+  }
+
+  function renderParams(){
+    pList.innerHTML='';
+    const keys = Object.keys(cur.params || {});
+    if(!keys.length){
+      pList.appendChild(el('div',{class:'muted-note'}, '(sin params en la tarea)'));
+      return;
+    }
+    keys.sort().forEach((k)=>{
+      const row = el('div', {style:'display:grid; grid-template-columns: 180px 1fr 120px; gap:8px; align-items:center; padding:8px; border:1px solid var(--border); border-radius:12px; background:var(--panel-alt);'});
+      const kk = el('input', {value:k});
+      const vv = el('input', {value:String(cur.params[k] ?? '')});
+      const rm = el('button', {class:'button ghost', type:'button'}, 'Quitar');
+
+      function saveKey(){
+        const nk = (kk.value||'').trim();
+        if(!nk) return;
+        if(nk !== k){
+          const val = cur.params[k];
+          delete cur.params[k];
+          cur.params[nk] = val;
+        }
+        cur.params[kk.value.trim()] = vv.value;
+        _argWrite(currentTask, cur);
+        renderParams();
+      }
+      function saveVal(){
+        cur.params[kk.value.trim() || k] = vv.value;
+        _argWrite(currentTask, cur);
+      }
+
+      kk.addEventListener('change', saveKey);
+      vv.addEventListener('input', saveVal);
+      rm.addEventListener('click', ()=>{ delete cur.params[k]; _argWrite(currentTask, cur); renderParams(); });
+
+      row.appendChild(kk); row.appendChild(vv); row.appendChild(rm);
+      pList.appendChild(row);
+    });
+  }
+
+  function loadTask(tid){
+    currentTask = tid || '';
+    if(!currentTask){
+      cur = { argset_ref:'', append_args:'', params:{} };
+      apInp.value='';
+      refreshArgsets();
+      aSel.value='';
+      renderParams();
+      return;
+    }
+    cur = _argRead(currentTask);
+    refreshArgsets();
+    aSel.value = cur.argset_ref || '';
+    apInp.value = cur.append_args || '';
+    renderParams();
+  }
+
+  function refresh(ids){
+    const prev = tSel.value;
+    tSel.innerHTML='';
+    (ids||[]).forEach(id => tSel.appendChild(el('option',{value:id}, id)));
+    if(ids && ids.length){
+      if(prev && ids.includes(prev)) tSel.value = prev;
+      else tSel.value = ids[0];
+      loadTask(tSel.value);
+    }else{
+      loadTask('');
+    }
+  }
+
+  // events
+  tSel.addEventListener('change', ()=> loadTask(tSel.value));
+  aSel.addEventListener('change', ()=>{ cur.argset_ref = aSel.value || ''; _argWrite(currentTask, cur); });
+  apInp.addEventListener('input', ()=>{ cur.append_args = apInp.value || ''; _argWrite(currentTask, cur); });
+
+  pAdd.addEventListener('click', ()=>{
+    const k = (pkInp.value||'').trim();
+    if(!k || !currentTask) return;
+    cur.params = cur.params || {};
+    cur.params[k] = pvInp.value || '';
+    _argWrite(currentTask, cur);
+    pkInp.value=''; pvInp.value=''; pkInp.focus();
+    renderParams();
+  });
+
+  // initial
+  refresh(taskIdOptions());
+  refreshArgsets();
+
+  return { refresh, refreshArgsets };
+}
+
+window.__resMgr = initResDepsPanel();
+if(window.__resMgr){ window.__resMgr.refresh(taskIdOptions()); }
 /* Toolbar + selects */
 (function initOps(){
   const sel = document.getElementById("opsel");
@@ -1511,7 +2519,37 @@ function collect(){
     if(e.downstream){ deps.push({ upstream: ets_id, downstream: e.downstream }); }
   });
 
-    // --- Hora específica para @once (NO es cron) ---
+    
+    // --- Assets (condiciones) ---
+  const assets_enabled = !!document.getElementById('assets_on')?.checked;
+  const asset_logic = (document.getElementById('asset_logic')?.value || 'OR').toUpperCase();
+  const asset_inlets_rows = qAll(document, "#asset_inlets > .section-card").map(card => {
+    const sel = card.querySelector('select[data-k="task_id"]');
+    const uri = card.querySelector('input[data-k="uri"]')?.value || "";
+    return { task_id: sel?.value || "", uri: uri.trim() };
+  }).filter(x => x.task_id && x.uri);
+  const asset_outlets_rows = qAll(document, "#asset_outlets > .section-card").map(card => {
+    const sel = card.querySelector('select[data-k="task_id"]');
+    const uri = card.querySelector('input[data-k="uri"]')?.value || "";
+    return { task_id: sel?.value || "", uri: uri.trim() };
+  }).filter(x => x.task_id && x.uri);
+
+  // dedupe URIs for schedule trigger (only inlets trigger the DAG)
+  const asset_inlets = [...new Set(asset_inlets_rows.map(x => x.uri))];
+
+  // attach inlets/outlets to tasks (lineage/documentation)
+  const byId = {}; tasks.forEach(t => { if(t.task_id) byId[t.task_id]=t; });
+  asset_inlets_rows.forEach(x => {
+    const t = byId[x.task_id]; if(!t) return;
+    t.inlets = (t.inlets || []); if(!t.inlets.includes(x.uri)) t.inlets.push(x.uri);
+  });
+  asset_outlets_rows.forEach(x => {
+    const t = byId[x.task_id]; if(!t) return;
+    t.outlets = (t.outlets || []); if(!t.outlets.includes(x.uri)) t.outlets.push(x.uri);
+  });
+
+
+// --- Hora específica para @once (NO es cron) ---
   const start_time_once = (() => {
     const hh = document.getElementById('once_hh')?.value ?? '';
     const mm = document.getElementById('once_mm')?.value ?? '';
@@ -1530,9 +2568,22 @@ function collect(){
     retry_minutes: parseInt(document.getElementById("retry_minutes")?.value || "5", 10),
     start_date: document.getElementById("start_date")?.value || "",    schedule: (function(){ const c = buildCronFromUI2(); window.builderState.schedule = c; return c; })(),
     timezone: (window.builderState?.timezone) || "UTC",
+    params: (window.builderState?.params) || {},
+    argsets: (window.builderState?.argsets) || {},
     start_time: start_time_once,
     catchup: !!document.getElementById("catchup")?.checked,
-    tags: (document.getElementById("tags")?.value || "").split(",").map(s => s.trim()).filter(Boolean),
+    confirm: !!document.getElementById("confirm_on")?.checked,
+    assets_enabled,
+    asset_logic,
+    asset_inlets,
+    tags: (function(){
+      const out = [];
+      const a = (document.getElementById("app")?.value || "").trim();
+      const s = (document.getElementById("subapp")?.value || "").trim();
+      if (a) out.push("app:" + a);
+      if (s) out.push("subapp:" + s);
+      return out;
+    })(),
     tasks, dependencies: deps
   };
 }
@@ -1648,6 +2699,12 @@ document.getElementById("btn_preview_footer")?.addEventListener("click", updateG
 });
 updateGraph();
 document.getElementById('themeToggle')?.addEventListener('click', ()=>{ setTimeout(()=>{ cy=null; updateGraph(); }, 50); });
-});
+  };
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', main, { once:true });
+  } else {
+    main();
+  }
+})();
 </script>
 {% endblock %}

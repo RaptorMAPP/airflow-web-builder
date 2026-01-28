@@ -1,493 +1,49 @@
 from __future__ import annotations
-from typing import Dict, List, Tuple, Any
-import re
-import ast
+
+from typing import Any, Dict, List, Tuple, Optional
 import json
-import pprint
+import re
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Catálogo de operadores (Airflow 3.1)
-# Nota: DummyOperator se mapea a EmptyOperator para compatibilidad.
-#       Asegúrate de tener instalados los providers correspondientes en Airflow.
-# ────────────────────────────────────────────────────────────────────────────────
-SUPPORTED_OPERATORS: Dict[str, Dict[str, Any]] = {
-    # Básicos
-    "EmptyOperator": {
-        "import": "from airflow.operators.empty import EmptyOperator",
-    },
-    "DummyOperator": {  # alias → EmptyOperator
-        "import": "from airflow.operators.empty import EmptyOperator",
-    },
-    "BashOperator": {
-        "import": "from airflow.operators.bash import BashOperator",
-    },
-    "PythonOperator": {
-        "import": "from airflow.operators.python import PythonOperator",
-    },
+from .operator_specs import ARGS_TARGET_FIELD, imports_for_tasks, render_task_line
+from .render_utils import (
+    argset_to_tokens,
+    apply_args_to_command,
+    ensure_dict,
+    fmt_bool,
+    merge_params,
+    sanitize_id,
+)
 
-    # Bases de datos
-    "SqliteOperator": {
-        "import": "from airflow.providers.sqlite.operators.sqlite import SqliteOperator",
-    },
-    "PostgresOperator": {
-        "import": "from airflow.providers.postgres.operators.postgres import PostgresOperator",
-    },
-    "MySqlOperator": {
-        "import": "from airflow.providers.mysql.operators.mysql import MySqlOperator",
-    },
-    "MsSqlOperator": {
-        "import": "from airflow.providers.microsoft.mssql.operators.mssql import MsSqlOperator",
-    },
-    "OracleOperator": {
-        "import": "from airflow.providers.oracle.operators.oracle import OracleOperator",
-    },
-    "SnowflakeOperator": {
-        "import": "from airflow.providers.snowflake.operators.snowflake import SnowflakeOperator",
-    },
 
-    # Cloud / Storage / Compute
-    "S3CreateObjectOperator": {
-        "import": "from airflow.providers.amazon.aws.operators.s3 import S3CreateObjectOperator",
-    },
-    "LambdaInvokeFunctionOperator": {
-        "import": "from airflow.providers.amazon.aws.operators.lambda_function import LambdaInvokeFunctionOperator",
-    },
-    "GlueJobOperator": {
-        "import": "from airflow.providers.amazon.aws.operators.glue import GlueJobOperator",
-    },
-    "BigQueryExecuteQueryOperator": {
-        "import": "from airflow.providers.google.cloud.operators.bigquery import BigQueryExecuteQueryOperator",
-    },
-    "DataflowCreateJavaJobOperator": {
-        "import": "from airflow.providers.google.cloud.operators.dataflow import DataflowCreateJavaJobOperator",
-    },
-    "AzureDataFactoryRunPipelineOperator": {
-        "import": "from airflow.providers.microsoft.azure.operators.data_factory import AzureDataFactoryRunPipelineOperator",
-    },
-    "DockerOperator": {
-        "import": "from airflow.providers.docker.operators.docker import DockerOperator",
-    },
-    "KubernetesPodOperator": {
-        "import": "from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator",
-    },
-    "SparkSubmitOperator": {
-        "import": "from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator",
-    },
-    "DatabricksSubmitRunOperator": {
-        "import": "from airflow.providers.databricks.operators.databricks import DatabricksSubmitRunOperator",
-    },
-
-    # HTTP / Email
-    "SimpleHttpOperator": {
-        "import": "from airflow.providers.http.operators.http import SimpleHttpOperator",
-    },
-    "EmailOperator": {
-        "import": "from airflow.operators.email import EmailOperator",
-    },
-
-    # Sensores / DAG ops
-    "ExternalTaskSensor": {
-        "import": "from airflow.sensors.external_task import ExternalTaskSensor",
-    },
-    "TriggerDagRunOperator": {
-        "import": "from airflow.operators.trigger_dagrun import TriggerDagRunOperator",
-    },
-
-    # Remotos
-    "SSHOperator": {
-        "import": "from airflow.providers.ssh.operators.ssh import SSHOperator",
-    },
-    "WinRMOperator": {
-        "import": "from airflow.providers.microsoft.winrm.operators.winrm import WinRMOperator",
-    },
-}
-
-# Presets de schedule para la UI (informativo; el backend acepta cualquier string)
-SCHEDULE_PRESETS = [
-    "@once", "@hourly", "@daily", "@weekly", "@monthly", "@yearly",
-    "*/5 * * * *", "0 * * * *", "0 3 * * *", "0 0 * * 1", "0 0 1 * *"
-]
-
-_HEADER_IMPORTS = """\
+_HEADER_IMPORTS = """
 from datetime import datetime, timedelta
 import pendulum
 from airflow import DAG
-{operator_imports}
+{extra_imports}{operator_imports}
 """
-
-# ────────────────────────────────────────────────────────────────────────────────
-# Timetable: MULTI cron (horarios específicos)
-# Se usa cuando schedule empieza con "MULTI|cron1||cron2||...".
-# ────────────────────────────────────────────────────────────────────────────────
-_MULTI_CRON_SUPPORT = """\
-from airflow.timetables.base import DagRunInfo, DataInterval, TimeRestriction, Timetable
-from croniter import croniter
-
-class MultiCronTimetable(Timetable):
-    # Timetable simple que combina múltiples expresiones cron (trigger-based).
-
-    def __init__(self, crons, timezone: str = "UTC"):
-        self._crons = list(crons or [])
-        self._timezone = timezone or "UTC"
-
-    @property
-    def summary(self) -> str:
-        return "MultiCronTimetable"
-
-    def serialize(self) -> dict:
-        return {"crons": self._crons, "timezone": self._timezone}
-
-    @classmethod
-    def deserialize(cls, data: dict) -> "MultiCronTimetable":
-        return cls(crons=data.get("crons") or [], timezone=data.get("timezone") or "UTC")
-
-    def infer_manual_data_interval(self, run_after):
-        # Trigger-based: start=end
-        run_after = run_after.in_timezone(self._timezone)
-        return DataInterval(start=run_after, end=run_after)
-
-    def next_dagrun_info(self, last_automated_data_interval, restriction: TimeRestriction):
-        now = pendulum.now(self._timezone)
-
-        earliest = restriction.earliest
-        if earliest is None:
-            earliest = now
-        else:
-            earliest = earliest.in_timezone(self._timezone)
-
-        if last_automated_data_interval is None:
-            after = earliest
-        else:
-            after = last_automated_data_interval.end.in_timezone(self._timezone)
-            if not restriction.catchup:
-                after = max(after, now)
-            after = max(after, earliest)
-
-        # croniter trabaja mejor con datetime naive
-        after_naive = after.replace(tzinfo=None)
-
-        candidates = []
-        for expr in self._crons:
-            try:
-                it = croniter(expr, after_naive)
-                nxt = it.get_next(datetime)
-                candidates.append(nxt)
-            except Exception:
-                continue
-
-        if not candidates:
-            return None
-
-        next_naive = min(candidates)
-        next_time = pendulum.instance(next_naive, tz=self._timezone)
-
-        latest = restriction.latest
-        if latest is not None:
-            latest = latest.in_timezone(self._timezone)
-            if next_time > latest:
-                return None
-
-        data_interval = DataInterval(start=next_time, end=next_time)
-        return DagRunInfo(run_after=next_time, data_interval=data_interval)
-"""
-
-
-# ────────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ────────────────────────────────────────────────────────────────────────────────
-
-def _json_to_py_literal(raw: Any, default: str = "{}") -> str:
-    """
-    Convierte un JSON (str/dict/list/…) a un literal de Python válido.
-    Si falla, devuelve `default` (por defecto "{}").
-    """
-    if raw is None:
-        return default
-    try:
-        if isinstance(raw, (dict, list, int, float, bool)):
-            obj = raw
-        elif isinstance(raw, str):
-            s = raw.strip()
-            if not s:
-                return default
-            # Primero intentamos JSON
-            try:
-                obj = json.loads(s)
-            except Exception:
-                # Intento como literal Python seguro
-                obj = ast.literal_eval(s)
-        else:
-            return default
-        return pprint.pformat(obj, width=100)
-    except Exception:
-        return default
-
-
-def _bo_kwargs(t: Dict[str, Any]) -> str:
-    """
-    Retorna kwargs comunes de BaseOperator si están presentes en la spec:
-    queue (Celery), pool, pool_slots, priority_weight, depends_on_past, task_concurrency.
-    """
-    parts = []
-    if t.get("queue"):
-        parts.append(f'queue="{t["queue"]}"')
-    if t.get("pool"):
-        parts.append(f'pool="{t["pool"]}"')
-        if t.get("pool_slots"):
-            try:
-                parts.append(f'pool_slots={int(t["pool_slots"])}')
-            except Exception:
-                pass
-    if t.get("priority_weight"):
-        parts.append(f'priority_weight={int(t["priority_weight"])}')
-    if str(t.get("depends_on_past")).lower() in ("true", "1"):
-        parts.append("depends_on_past=True")
-    if t.get("task_concurrency"):
-        parts.append(f'task_concurrency={int(t["task_concurrency"])}')
-    return (", " + ", ".join(parts)) if parts else ""
-
-
-def _parse_kwargs_json(raw: Any) -> str:
-    """Devuelve un literal dict de Python para **kwargs. Si viene vacío, {}."""
-    if raw is None or str(raw).strip() == "":
-        return "{}"
-    try:
-        obj = json.loads(raw) if isinstance(raw, str) else raw
-        if not isinstance(obj, dict):
-            return "{}"
-        return pprint.pformat(obj, width=100)
-    except Exception:
-        return "{}"
-
-
-def _resolve_operator_key(ttype: str) -> str:
-    # DummyOperator se resoluciona como EmptyOperator
-    return "EmptyOperator" if ttype == "DummyOperator" else ttype
-
-
-def _imports_for_tasks(tasks: List[Dict[str, Any]]) -> List[str]:
-    used: set[str] = set()
-    for t in tasks or []:
-        typ = _resolve_operator_key(str(t.get("type") or ""))
-        imp = SUPPORTED_OPERATORS.get(typ, {}).get("import")
-        if imp:
-            used.add(imp)
-        # soporta imports ad-hoc de CustomOperator
-        cimp = t.get("_custom_import")
-        if cimp:
-            used.add(cimp)
-    return sorted(used)
-
-
-def _sanitize_id(s: str) -> str:
-    s = (s or "").strip()
-    s = re.sub(r"\s+", "_", s)
-    s = re.sub(r"[^A-Za-z0-9_]", "_", s)
-    if not re.match(r"^[A-Za-z_]", s):
-        s = f"t_{s}"
-    return s or "t_task"
 
 
 def _render_python_callables(tasks: List[Dict[str, Any]]) -> str:
-    """Genera stubs para PythonOperator."""
+    """Genera stubs para PythonOperator si el builder incluyó body."""
     pieces: List[str] = []
     for t in tasks or []:
-        if t.get("type") == "PythonOperator":
-            fn = _sanitize_id(t.get("python_callable_name") or f'fn_{t.get("task_id", "task")}')
-            body = t.get("python_callable_body") or "print('Hello from PythonOperator')"
-            pieces.append(f"def {fn}(**context):\n    {body}\n")
-    return ("\n".join(pieces) + ("\n" if pieces else ""))
-
-
-def _fmt_bool(val: Any) -> str:
-    return "True" if str(val).strip().lower() in ("1", "true", "yes", "y") else "False"
-
-
-def _quote(s: str) -> str:
-    return (s or "").replace('"', '\\"')
-
-
-def _render_task_line(t: Dict[str, Any]) -> str:
-    ttype = t["type"]
-    task_id = _sanitize_id(t["task_id"])
-    if ttype == "DummyOperator":
-        ttype = "EmptyOperator"
-
-    if ttype == "EmptyOperator":
-        return f'{task_id} = EmptyOperator(task_id="{task_id}"{_bo_kwargs(t)})'
-
-    if ttype == "BashOperator":
-        cmd = _quote(t.get("bash_command") or 'echo "hello"')
-        return f'{task_id} = BashOperator(task_id="{task_id}", bash_command="{cmd}"{_bo_kwargs(t)})'
-
-    if ttype == "PythonOperator":
-        fn = _sanitize_id(t.get("python_callable_name") or f"fn_{task_id}")
-        return f'{task_id} = PythonOperator(task_id="{task_id}", python_callable={fn}{_bo_kwargs(t)})'
-
-    if ttype == "SqliteOperator":
-        return f'{task_id} = SqliteOperator(task_id="{task_id}", sqlite_conn_id="{t.get("sqlite_conn_id", "sqlite_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
-
-    if ttype == "PostgresOperator":
-        return f'{task_id} = PostgresOperator(task_id="{task_id}", postgres_conn_id="{t.get("postgres_conn_id", "postgres_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
-
-    if ttype == "MySqlOperator":
-        return f'{task_id} = MySqlOperator(task_id="{task_id}", mysql_conn_id="{t.get("mysql_conn_id", "mysql_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
-
-    if ttype == "MsSqlOperator":
-        return f'{task_id} = MsSqlOperator(task_id="{task_id}", mssql_conn_id="{t.get("mssql_conn_id", "mssql_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
-
-    if ttype == "OracleOperator":
-        return f'{task_id} = OracleOperator(task_id="{task_id}", oracle_conn_id="{t.get("oracle_conn_id", "oracle_default")}", sql="{_quote(t.get("sql", "SELECT 1 FROM dual"))}"{_bo_kwargs(t)})'
-
-    if ttype == "SnowflakeOperator":
-        return f'{task_id} = SnowflakeOperator(task_id="{task_id}", snowflake_conn_id="{t.get("snowflake_conn_id", "snowflake_default")}", sql="{_quote(t.get("sql", "SELECT 1;"))}"{_bo_kwargs(t)})'
-
-    if ttype == "S3CreateObjectOperator":
-        return (
-            f'{task_id} = S3CreateObjectOperator(task_id="{task_id}", aws_conn_id="{t.get("aws_conn_id", "aws_default")}", '
-            f's3_bucket="{t.get("s3_bucket", "my-bucket")}", s3_key="{t.get("s3_key", "path/file.txt")}", data="{_quote(t.get("data", "hello world"))}"{_bo_kwargs(t)})')
-
-    if ttype == "LambdaInvokeFunctionOperator":
-        return (
-            f'{task_id} = LambdaInvokeFunctionOperator(task_id="{task_id}", aws_conn_id="{t.get("aws_conn_id", "aws_default")}", '
-            f'function_name="{t.get("function_name", "my-fn")}", payload="{_quote(t.get("payload", "{}"))}"{_bo_kwargs(t)})')
-
-    if ttype == "GlueJobOperator":
-        return (
-            f'{task_id} = GlueJobOperator(task_id="{task_id}", aws_conn_id="{t.get("aws_conn_id", "aws_default")}", '
-            f'job_name="{t.get("job_name", "my-job")}", script_location="{t.get("script_location", "s3://bucket/script.py")}", '
-            f'iam_role_name="{t.get("iam_role_name", "glue-role")}", num_of_dpus={int(t.get("num_of_dpus") or 10)}{_bo_kwargs(t)})')
-
-    if ttype == "BigQueryExecuteQueryOperator":
-        return (
-            f'{task_id} = BigQueryExecuteQueryOperator(task_id="{task_id}", gcp_conn_id="{t.get("gcp_conn_id", "google_cloud_default")}", '
-            f'sql="{_quote(t.get("sql", "SELECT 1;"))}", use_legacy_sql={_fmt_bool(t.get("use_legacy_sql", "false"))}{_bo_kwargs(t)})')
-
-    if ttype == "DataflowCreateJavaJobOperator":
-        options = _quote(t.get("options") or "{}")
-        return (
-            f'{task_id} = DataflowCreateJavaJobOperator(task_id="{task_id}", gcp_conn_id="{t.get("gcp_conn_id", "google_cloud_default")}", '
-            f'jar="{t.get("jar", "/path/app.jar")}", job_name="{t.get("job_name", "dataflow-job")}", options="{options}"{_bo_kwargs(t)})')
-
-    if ttype == "AzureDataFactoryRunPipelineOperator":
-        params = _quote(t.get("parameters") or "{}")
-        return (f'{task_id} = AzureDataFactoryRunPipelineOperator(task_id="{task_id}", '
-                f'azure_data_factory_conn_id="{t.get("azure_data_factory_conn_id", "azure_data_factory_default")}", '
-                f'pipeline_name="{t.get("pipeline_name", "pipeline1")}", parameters="{params}"{_bo_kwargs(t)})')
-
-    if ttype == "DockerOperator":
-        return (f'{task_id} = DockerOperator(task_id="{task_id}", image="{t.get("image", "python:3.11")}", '
-                f'api_version="{t.get("api_version", "auto")}", command="{_quote(t.get("command", "echo hello"))}", '
-                f'docker_url="{t.get("docker_url", "unix://var/run/docker.sock")}", auto_remove={_fmt_bool(t.get("auto_remove", "true"))}{_bo_kwargs(t)})')
-
-    if ttype == "KubernetesPodOperator":
-        # soporta env/cmds/args como JSON o literales python
-        env_literal = _json_to_py_literal(t.get("env"), "{}")
-        name = _quote(t.get("name", "pod-task"))
-        namespace = _quote(t.get("namespace", "default"))
-        image = _quote(t.get("image", "python:3.11"))
-        cmds = _json_to_py_literal(t.get("cmds", '["python","-c"]'), "[]")
-        args = _json_to_py_literal(t.get("arguments", '["print(\\"hi\\")"]'), "[]")
-        return (f'{task_id} = KubernetesPodOperator(task_id="{task_id}", name="{name}", '
-                f'namespace="{namespace}", image="{image}", cmds={cmds}, arguments={args}, '
-                f'env_vars={env_literal}{_bo_kwargs(t)})')
-
-    if ttype == "SparkSubmitOperator":
-        args = _json_to_py_literal(t.get("application_args") or "[]", "[]")
-        return (
-            f'{task_id} = SparkSubmitOperator(task_id="{task_id}", application="{t.get("application", "/path/app.py")}", '
-            f'conn_id="{t.get("conn_id", "spark_default")}", application_args={args}{_bo_kwargs(t)})')
-
-    if ttype == "DatabricksSubmitRunOperator":
-        payload = _json_to_py_literal(t.get("json") or "{}", "{}")
-        return (f'{task_id} = DatabricksSubmitRunOperator(task_id="{task_id}", '
-                f'databricks_conn_id="{t.get("databricks_conn_id", "databricks_default")}", json={payload}{_bo_kwargs(t)})')
-
-    if ttype == "SimpleHttpOperator":
-        data = t.get("data") or ""
-        headers = t.get("headers") or ""
-        return (
-            f'{task_id} = SimpleHttpOperator(task_id="{task_id}", http_conn_id="{t.get("http_conn_id", "http_default")}", '
-            f'endpoint="{t.get("endpoint", "/")}", method="{(t.get("method") or "GET").upper()}", '
-            f'data={repr(data)}, headers={repr(headers)}{_bo_kwargs(t)})')
-
-    if ttype == "EmailOperator":
-        to = t.get("to", "example@example.com")
-        subj = _quote(t.get("subject") or "Airflow Notification")
-        html = _quote(t.get("html_content") or "Job done.")
-        return f'{task_id} = EmailOperator(task_id="{task_id}", to="{to}", subject="{subj}", html_content="{html}"{_bo_kwargs(t)})'
-
-    if ttype == "ExternalTaskSensor":
-        # espera a que termine una tarea (o todo el DAG) en OTRO DAG
-        return (
-            f'{task_id} = ExternalTaskSensor('
-            f'task_id="{task_id}", '
-            f'external_dag_id="{_quote(t.get("external_dag_id", "other_dag"))}", '
-            f'external_task_id={repr(t.get("external_task_id") or None)}, '  # None => espera al DAG completo
-            f'mode="{t.get("mode", "reschedule")}", '
-            f'poke_interval={int(t.get("poke_interval") or 60)}, '
-            f'timeout={int(t.get("timeout") or 3600)}'
-            f'{_bo_kwargs(t)})'
-        )
-
-    if ttype == "TriggerDagRunOperator":
-        # dispara otro DAG (no espera a task específica)
-        return (
-            f'{task_id} = TriggerDagRunOperator('
-            f'task_id="{task_id}", '
-            f'trigger_dag_id="{_quote(t.get("trigger_dag_id", "other_dag"))}"'
-            f'{_bo_kwargs(t)})'
-        )
-
-    if ttype == "CustomOperator":
-        module = (t.get("import_path") or "").strip()  # ej: airflow.providers.amazon.aws.operators.s3
-        cls = (t.get("class_name") or "").strip()  # ej: S3CreateObjectOperator
-        kwargs = _parse_kwargs_json(t.get("kwargs"))  # ej: {"aws_conn_id":"...", "s3_bucket":"..."}
-        if not module or not cls:
-            # si falta algo esencial, genera Empty para no romper
-            return f'{task_id} = EmptyOperator(task_id="{task_id}")  # CUSTOM MISSING IMPORT/CLASS'
-        # guardamos el import en un campo especial para que _imports_for_tasks lo recoja
-        t["_custom_import"] = f"from {module} import {cls}"
-        return f'{task_id} = {cls}(task_id="{task_id}", **({kwargs}){_bo_kwargs(t)})'
-
-    if ttype == "SSHOperator":
-        cmd = _quote(t.get("command", "echo hello"))
-        ssh_conn_id = _quote(t.get("ssh_conn_id", "ssh_default"))
-        remote_host = t.get("remote_host")
-        get_pty = str(t.get("get_pty", "true")).lower() in ("true", "1")
-        env_literal = _json_to_py_literal(t.get("environment"), "{}")
-        extra = f', remote_host="{remote_host}"' if remote_host else ""
-        return (f'{task_id} = SSHOperator(task_id="{task_id}", ssh_conn_id="{ssh_conn_id}", '
-                f'command="{cmd}", get_pty={get_pty}, environment={env_literal}{extra}{_bo_kwargs(t)})')
-
-    if ttype == "WinRMOperator":
-        winrm_conn_id = _quote(t.get("winrm_conn_id", "winrm_default"))
-        cmd = _quote(t.get("command", "Write-Output \\Hello\\"))
-        ps = str(t.get("powershell", "true")).lower() in ("true", "1")
-        return (f'{task_id} = WinRMOperator(task_id="{task_id}", winrm_conn_id="{winrm_conn_id}", '
-                f'command="{cmd}", powershell={ps}{_bo_kwargs(t)})')
-
-    return ""  # tipo no soportado
-
-
-def _render_tasks(tasks: List[Dict[str, Any]]) -> str:
-    lines: List[str] = []
-    for raw in tasks or []:
-        if not raw.get("type") or not raw.get("task_id"):
+        if t.get("type") != "PythonOperator":
             continue
-        raw["task_id"] = _sanitize_id(raw["task_id"])
-        line = _render_task_line(raw)
-        if line:
-            lines.append(line)
-    return "\n    ".join(lines)
+        fn = sanitize_id(t.get("python_callable_name") or f"fn_{t.get('task_id','task')}")
+        body = (t.get("python_callable_body") or "print('Hello from PythonOperator')").rstrip()
+        # indent seguro
+        lines = body.splitlines() or ["pass"]
+        indented = "\n".join(["    " + ln for ln in lines])
+        pieces.append(f"def {fn}(**context):\n{indented}\n")
+    return ("\n".join(pieces) + ("\n" if pieces else ""))
 
 
 def _render_dependencies(edges: List[Dict[str, Any]], valid_ids: set[str]) -> Tuple[str, List[str]]:
     out: List[str] = []
     warns: List[str] = []
     for e in edges or []:
-        u = _sanitize_id(e.get("upstream") or "")
-        d = _sanitize_id(e.get("downstream") or "")
+        u = sanitize_id(e.get("upstream") or "")
+        d = sanitize_id(e.get("downstream") or "")
         if not u or not d:
             continue
         if u in valid_ids and d in valid_ids:
@@ -497,134 +53,441 @@ def _render_dependencies(edges: List[Dict[str, Any]], valid_ids: set[str]) -> Tu
     return ("\n    ".join(out), warns)
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Normalización y dedupe (evita “task_id duplicado”)
-# ────────────────────────────────────────────────────────────────────────────────
 def _dedupe_task_ids(tasks: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
     out: List[Dict[str, Any]] = []
     seen: Dict[str, int] = {}
     for t in tasks or []:
-        base = _sanitize_id(t.get("task_id") or "")
-        if not base:
-            base = "t_task"
+        base = sanitize_id(t.get("task_id") or "") or "t_task"
         if base in seen:
             seen[base] += 1
             new_id = f"{base}_{seen[base]}"
         else:
             seen[base] = 1
             new_id = base
-        t2 = dict(t, task_id=new_id)
-        out.append(t2)
+        out.append(dict(t, task_id=new_id))
     warnings = [f"task_id duplicado ajustado: {k} -> {k}_2..{v}" for k, v in seen.items() if v > 1]
     return out, warnings
 
 
 def _normalize_spec(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     spec = dict(spec or {})
-    spec["dag_id"] = _sanitize_id(spec.get("dag_id") or "dag_generated")
-    spec["schedule"] = spec.get("schedule") or "@daily"
-    # timezone opcional (para start_date tz-aware)
-    tz = (spec.get("timezone") or "").strip()
+    spec["dag_id"] = sanitize_id(spec.get("dag_id") or "dag_generated")
+    spec["schedule"] = (spec.get("schedule") or "@daily").strip()
+    tz = (spec.get("timezone") or "UTC").strip()
     spec["timezone"] = tz or "UTC"
     tasks, w = _dedupe_task_ids(spec.get("tasks") or [])
     spec["tasks"] = tasks
+    # params/argsets
+    spec["params"] = ensure_dict(spec.get("params"))
+    spec["argsets"] = ensure_dict(spec.get("argsets"))
+    spec["task_overrides"] = ensure_dict(spec.get("task_overrides"))
+
+    # tags: acepta lista o string
+    tags = spec.get("tags")
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+    elif isinstance(tags, list):
+        tags = [str(t).strip() for t in tags if str(t).strip()]
+    else:
+        tags = []
+    spec["tags"] = tags
+
+    # confirm: bool o string truthy
+    spec["confirm"] = str(spec.get("confirm", "")).strip().lower() in ("1", "true", "yes", "y")
+
     return spec, w
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Generación final del DAG
-# ────────────────────────────────────────────────────────────────────────────────
+def _parse_start_date(spec: Dict[str, Any]) -> Tuple[int, int, int, int, int]:
+    """Retorna y,m,d,hh,mm. Usa start_time solo si schedule=@once."""
+    y, m, d = 2025, 1, 1
+    hh, mm = 0, 0
+    sd = (spec.get("start_date") or "2025-01-01").strip()
+    try:
+        # acepta YYYY-MM-DD o YYYY-MM-DDTHH:MM
+        if "T" in sd:
+            date_part, time_part = sd.split("T", 1)
+            y, m, d = [int(x) for x in date_part.split("-")]
+            hh, mm = [int(x) for x in time_part.split(":")[:2]]
+        else:
+            y, m, d = [int(x) for x in sd.split("-")]
+    except Exception:
+        y, m, d, hh, mm = 2025, 1, 1, 0, 0
+
+    # si schedule=@once y viene start_time explícito, se usa
+    if (spec.get("schedule") or "").strip() == "@once" and spec.get("start_time"):
+        try:
+            th, tm = str(spec.get("start_time")).split(":")[:2]
+            hh, mm = int(th), int(tm)
+        except Exception:
+            hh, mm = 0, 0
+
+    return y, m, d, hh, mm
+
+
+def _is_truthy(v: Any) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "y")
+
+
+def _parse_multi_schedule(schedule: str) -> List[str]:
+    # MULTI|cron1||cron2...
+    if not isinstance(schedule, str):
+        return []
+    s = schedule.strip()
+    if not s.startswith("MULTI|"):
+        return []
+    body = s[len("MULTI|") :]
+    crons = [c.strip() for c in body.split("||") if c.strip()]
+    return crons
+
+
+def _parse_calendar_schedule(schedule: str) -> Optional[Dict[str, Any]]:
+    """Parses calendario custom.
+
+    - CAL|<calendar_name>|HH:MM
+    - CALC|<calendar_name>|unit|N|from|to|at_mm
+    """
+    if not isinstance(schedule, str):
+        return None
+    s = schedule.strip()
+
+    if s.startswith("CAL|"):
+        parts = s.split("|")
+        if len(parts) < 3:
+            return None
+        cal_name = (parts[1] or "").strip()
+        at = (parts[2] or "00:00").strip()
+        if not cal_name:
+            return None
+        if not re.match(r"^\d{2}:\d{2}$", at):
+            at = "00:00"
+        return {"kind": "CAL", "calendar": cal_name, "at": at}
+
+    if s.startswith("CALC|"):
+        parts = s.split("|")
+        if len(parts) < 7:
+            return None
+        cal_name = (parts[1] or "").strip()
+        if not cal_name:
+            return None
+        unit = (parts[2] or "minutes").strip()
+        if unit not in ("minutes", "hours"):
+            unit = "minutes"
+
+        def _to_int(x: Any, default: int) -> int:
+            try:
+                return int(x)
+            except Exception:
+                return default
+
+        every = _to_int(parts[3], 15)
+        window_from = _to_int(parts[4], 0)
+        window_to = _to_int(parts[5], 23)
+        at_minute = _to_int(parts[6], 0)
+
+        return {
+            "kind": "CALC",
+            "calendar": cal_name,
+            "unit": unit,
+            "every": every,
+            "window_from": window_from,
+            "window_to": window_to,
+            "at_minute": at_minute,
+        }
+
+    return None
+
+
+
+
+
+def _parse_asset_list(val: Any) -> List[str]:
+    if val is None:
+        return []
+    if isinstance(val, list):
+        raw = val
+    else:
+        raw = re.split(r"[\n,]+", str(val))
+    out: List[str] = []
+    for x in raw:
+        x = str(x).strip()
+        if x:
+            out.append(x)
+    # dedupe preserving order
+    seen: set[str] = set()
+    ded: List[str] = []
+    for u in out:
+        if u in seen:
+            continue
+        seen.add(u)
+        ded.append(u)
+    return ded
+
+
+def _assets_expr(uris: List[str], logic: str = "OR") -> str:
+    logic = (logic or "OR").upper().strip()
+    if not uris:
+        return ""
+    parts = [f"Asset({json.dumps(u)})" for u in uris]
+    if len(parts) == 1:
+        return parts[0]
+    op = " & " if logic == "AND" else " | "
+    return "(" + op.join(parts) + ")"
+
+
+
 def build_dag_code(spec: Dict[str, Any]) -> str:
+    """Genera un archivo .py de DAG a partir de la spec del builder."""
     spec, warn_dedupe = _normalize_spec(spec)
 
-    # Campos DAG
     dag_id = spec["dag_id"]
-    description = _quote(spec.get("description") or "")
+    description = (spec.get("description") or "").replace('"', '\\"')
     retries = int(spec.get("retries") or 1)
     retry_minutes = int(spec.get("retry_minutes") or 5)
+    catchup = _is_truthy(spec.get("catchup", False))
+    confirm = _is_truthy(spec.get("confirm", False))
 
-    # start_date
-    try:
-        y, m, d = [int(x) for x in (spec.get("start_date") or "2025-01-01").split("-")]
-    except Exception:
-        y, m, d = 2025, 1, 1
+    tags = list(spec.get("tags") or [])
+    app_tag = (spec.get("app") or "").strip()
+    subapp_tag = (spec.get("subapp") or "").strip()
+    if app_tag:
+        t = f"app:{app_tag}"
+        if t not in tags:
+            tags.append(t)
+    if subapp_tag:
+        t = f"subapp:{subapp_tag}"
+        if t not in tags:
+            tags.append(t)
 
-    schedule = spec.get("schedule") or "@daily"
+    timezone = (spec.get("timezone") or "UTC")
 
-    multi_crons: List[str] | None = None
-    if isinstance(schedule, str) and schedule.startswith("MULTI|"):
-        multi_crons = [p.strip() for p in schedule[len("MULTI|"):].split("||") if p.strip()]
-    start_hour = 0
-    start_minute = 0
-    if schedule == "@once" and spec.get("start_time"):
-        try:
-            hh, mm = spec["start_time"].split(":")
-            start_hour = int(hh)
-            start_minute = int(mm)
-        except Exception:
-            # si hay formato inválido, cae a las 00:00
-            start_hour = 0
-            start_minute = 0
-    catchup = bool(spec.get("catchup", False))
-    tags = spec.get("tags") or []
-    timezone = (spec.get("timezone") or "UTC").replace('"', '\\"')
+    y, m, d, hh, mm = _parse_start_date(spec)
 
-    # Imports por operador
-    operator_imports = _imports_for_tasks(spec.get("tasks") or [])
-    header = _HEADER_IMPORTS.format(operator_imports="\n".join(operator_imports))
+    schedule_raw = (spec.get("schedule") or "@daily").strip()
+    if schedule_raw.lower() in ("@none", "none", "null", "nil", ""):
+        schedule_raw = "None"
+
+    multi_crons = _parse_multi_schedule(schedule_raw)
+    cal = _parse_calendar_schedule(schedule_raw)
+
+    # Assets (condiciones)
+    assets_enabled = _is_truthy(spec.get("assets_enabled", False))
+    asset_logic = (spec.get("asset_logic") or "OR").upper().strip()
+    asset_inlets = _parse_asset_list(spec.get("asset_inlets"))
+    assets_expr = _assets_expr(asset_inlets, asset_logic) if (assets_enabled and asset_inlets) else ""
+
+    needs_asset_import = bool(assets_expr)
+    for _t in spec.get("tasks") or []:
+        if _t.get("inlets") or _t.get("outlets"):
+            needs_asset_import = True
+            break
+
+    extra_imports = ""
+    if needs_asset_import:
+        extra_imports += "from airflow.sdk import Asset\n\n"
+
+    timetable_expr = None
+    schedule_render = None
+
+    if cal:
+        extra_imports += "from ctm_calendar.timetable import CalendarTimetable\n\n"
+        if cal.get("kind") == "CAL":
+            timetable_expr = (
+                f"CalendarTimetable(calendar={json.dumps(cal['calendar'])}, "
+                f"at={json.dumps(cal.get('at') or '00:00')}, "
+                f"timezone={json.dumps(timezone)})"
+            )
+        else:
+            timetable_expr = (
+                "CalendarTimetable("
+                f"calendar={json.dumps(cal['calendar'])}, "
+                f"timezone={json.dumps(timezone)}, "
+                "cyclic=True, "
+                f"unit={json.dumps(cal.get('unit') or 'minutes')}, "
+                f"every={int(cal.get('every') or 15)}, "
+                f"window_from={int(cal.get('window_from') or 0)}, "
+                f"window_to={int(cal.get('window_to') or 23)}, "
+                f"at_minute={int(cal.get('at_minute') or 0)}"
+                ")"
+            )
+
+    elif multi_crons:
+        # timetable oficial Airflow 3.1
+        extra_imports += "from airflow.timetables.trigger import MultipleCronTriggerTimetable\n\n"
+        cron_args = ", ".join([json.dumps(c) for c in multi_crons])
+        timetable_expr = f"MultipleCronTriggerTimetable({cron_args}, timezone=local_tz)"
+
+    elif schedule_raw == "None":
+        timetable_expr = None
+
+    elif schedule_raw == "@once":
+        # sin assets => schedule="@once" directo. con assets => usamos OnceTimetable()
+        if assets_expr:
+            extra_imports += "from airflow.timetables.simple import OnceTimetable\n\n"
+            timetable_expr = "OnceTimetable()"
+        else:
+            schedule_render = json.dumps(schedule_raw)
+
+    else:
+        # presets (@daily, etc) o cron string
+        if assets_expr:
+            extra_imports += "from airflow.timetables.trigger import CronTriggerTimetable\n\n"
+            timetable_expr = f"CronTriggerTimetable({json.dumps(schedule_raw)}, timezone=local_tz)"
+        else:
+            schedule_render = json.dumps(schedule_raw)
+
+    # aplica assets en schedule si corresponde
+    if assets_expr:
+        if timetable_expr is None:
+            schedule_render = assets_expr
+        else:
+            extra_imports += "from airflow.timetables.assets import AssetOrTimeSchedule\n\n"
+            schedule_render = f"AssetOrTimeSchedule(timetable={timetable_expr}, assets={assets_expr})"
+    else:
+        if schedule_render is None:
+            schedule_render = timetable_expr if timetable_expr is not None else "None"
+# imports extra (confirm gate)
+    if confirm:
+        extra_imports += "from airflow.sensors.python import PythonSensor\nfrom airflow.models import Variable\n\n"
+
+    # Imports de operadores
+    operator_imports = imports_for_tasks(spec.get("tasks") or [])
+    header = _HEADER_IMPORTS.format(
+        extra_imports=extra_imports,
+        operator_imports=("\n".join(operator_imports) + ("\n" if operator_imports else "")),
+    )
 
     # callables PythonOperator
     pydefs = _render_python_callables(spec.get("tasks") or [])
 
-    # Tareas + dependencias
-    task_ids: set[str] = {_sanitize_id(t.get("task_id") or "") for t in (spec.get("tasks") or []) if t.get("task_id")}
-    tasks_section = _render_tasks(spec.get("tasks") or [])
-    deps_section, warn_deps = _render_dependencies(spec.get("dependencies") or [], task_ids)
-    tags_list = ", ".join([f'"{t}"' for t in tags])
+    if confirm:
+        pydefs += """def _confirm_gate(**context):
+    dag = context.get(\"dag\")
+    dag_id = dag.dag_id if dag else \"\"
+    dag_run = context.get(\"dag_run\")
+    run_id = getattr(dag_run, \"run_id\", \"\") if dag_run else \"\"
+    key = f\"confirm__{dag_id}__{run_id}\"
+    v = Variable.get(key, default_var=\"0\")
+    return str(v).strip().lower() in (\"1\", \"true\", \"yes\", \"y\")
 
-    # Warnings de generación (comentados al inicio del archivo generado)
+
+"""
+
+    # apply params/argsets per task
+    global_params = spec.get("params") or {}
+    argsets = spec.get("argsets") or {}
+    overrides = spec.get("task_overrides") or {}
+
+    rendered_tasks: List[str] = []
+    task_ids: set[str] = set()
+
+    for raw in spec.get("tasks") or []:
+        if not raw.get("type") or not raw.get("task_id"):
+            continue
+        t = dict(raw)
+        t["task_id"] = sanitize_id(t["task_id"])
+        task_ids.add(t["task_id"])
+
+        ov = overrides.get(t["task_id"], {}) if isinstance(overrides, dict) else {}
+
+        # params: merge global + override/task
+        task_params = ov.get("params", None)
+        if task_params is None:
+            task_params = t.get("params")
+        params_merged = merge_params(global_params, task_params)
+
+        # argset: apply only for command-like operators
+        argset_ref = (ov.get("argset_ref") or t.get("argset_ref") or "").strip()
+        append_args = (ov.get("append_args") or t.get("append_args") or "").strip()
+
+        if argset_ref and t.get("type") in ARGS_TARGET_FIELD:
+            field = ARGS_TARGET_FIELD[t["type"]]
+            base_cmd = t.get(field) or ""
+            tokens = argset_to_tokens(argsets.get(argset_ref))
+            t[field] = apply_args_to_command(base_cmd, tokens, append_raw=append_args)
+        elif append_args and t.get("type") in ARGS_TARGET_FIELD:
+            field = ARGS_TARGET_FIELD[t["type"]]
+            base_cmd = t.get(field) or ""
+            t[field] = apply_args_to_command(base_cmd, [], append_raw=append_args)
+
+        line = render_task_line(t, params=params_merged if params_merged else None)
+        if line:
+            rendered_tasks.append(line)
+
+    # confirm gate: agrega una tarea sensor inicial y la conecta a los "roots"
+    deps_edges = list(spec.get("dependencies") or [])
+    if confirm:
+        base_id = "confirm"
+        confirm_task_id = base_id
+        i = 1
+        while confirm_task_id in task_ids:
+            i += 1
+            confirm_task_id = f"{base_id}_{i}"
+
+        rendered_tasks.insert(
+            0,
+            f'{confirm_task_id} = PythonSensor(task_id={json.dumps(confirm_task_id)}, python_callable=_confirm_gate, mode="reschedule", poke_interval=60)'
+        )
+        task_ids.add(confirm_task_id)
+
+        # calcula roots según dependencias originales (antes de inyectar confirm)
+        downstream: set[str] = set()
+        for e in deps_edges:
+            d = sanitize_id(e.get("downstream") or "")
+            if d:
+                downstream.add(d)
+
+        roots = [tid for tid in task_ids if tid != confirm_task_id and tid not in downstream]
+        if not roots and task_ids:
+            roots = [tid for tid in task_ids if tid != confirm_task_id]
+
+        for r in roots:
+            deps_edges.append({"upstream": confirm_task_id, "downstream": r})
+
+    tasks_section = "\n    ".join(rendered_tasks) if rendered_tasks else "pass"
+    deps_section, warn_deps = _render_dependencies(deps_edges, task_ids)
+
+    tags_list = ", ".join([json.dumps(str(t)) for t in tags])
+
+    # warnings
+    warnings: List[str] = []
+    warnings.extend(warn_dedupe or [])
+    warnings.extend(warn_deps or [])
     warnings_block = ""
-    all_warns = []
-    if warn_dedupe:
-        all_warns.extend(warn_dedupe)
-    if 'warn_deps' in locals() and warn_deps:
-        all_warns.extend(warn_deps)
-    if all_warns:
-        warnings_block = "# WARNINGS:\n# " + "\n# ".join(all_warns) + "\n\n"
+    if warnings:
+        warnings_block = "# WARNINGS:\n# " + "\n# ".join(warnings) + "\n\n"
 
-        # start_date render según @once
-    start_date_render = (
-        f"datetime({y}, {m}, {d}, {start_hour}, {start_minute}, tzinfo=local_tz)"
-        if schedule == "@once"
-        else f"datetime({y}, {m}, {d}, tzinfo=local_tz)"
-    )
+    # start_date render
+    if schedule_raw == "@once":
+        start_date_render = f"datetime({y}, {m}, {d}, {hh}, {mm}, tzinfo=local_tz)"
+    else:
+        start_date_render = f"datetime({y}, {m}, {d}, tzinfo=local_tz)"
 
-    # schedule_render (permite MULTI cron)
-    timetable_support = ""
-    schedule_render = f'"{schedule}"'
-    if multi_crons:
-        timetable_support = _MULTI_CRON_SUPPORT
-        schedule_render = f"MultiCronTimetable(crons={json.dumps(multi_crons)}, timezone=\"{timezone}\")"
-    # Código final
-    code = f'''{warnings_block}{header}{timetable_support}
-local_tz = pendulum.timezone("{timezone}")
+    max_active_runs_line = "    max_active_runs=1,\n" if assets_expr else ""
+
+    # build code
+    code = f"""{warnings_block}{header}
+local_tz = pendulum.timezone({json.dumps(timezone)})
 
 default_args = {{
-    "owner": "{spec.get("owner", "owner")}",
-    "retries": {retries},
-    "retry_delay": timedelta(minutes={retry_minutes})
+    \"owner\": {json.dumps(spec.get('owner') or 'owner')},
+    \"retries\": {retries},
+    \"retry_delay\": timedelta(minutes={retry_minutes})
 }}
 
 {pydefs}with DAG(
-    dag_id="{dag_id}",
-    description="{description}",
+    dag_id={json.dumps(dag_id)},
+    description={json.dumps(description)},
     start_date={start_date_render},
     schedule={schedule_render},
-    catchup={str(catchup)},
-    default_args=default_args,
+    catchup={fmt_bool(catchup)},
+{max_active_runs_line}    default_args=default_args,
     tags=[{tags_list}]
 ) as dag:
     {tasks_section}
-    {deps_section}
-'''
+"""
+
+    if deps_section:
+        code += f"\n    {deps_section}\n"
+
     return code
