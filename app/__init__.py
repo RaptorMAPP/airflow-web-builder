@@ -33,6 +33,8 @@ def create_app():
     from .schedule_preview import schedule_preview_bp
     from .calendars import calendars_bp
     app.register_blueprint(calendars_bp)
+    from app.routes.import_api import bp_import
+    app.register_blueprint(bp_import)
     app.register_blueprint(schedule_preview_bp)
     app.register_blueprint(builder_bp)
     app.register_blueprint(validator_bp)

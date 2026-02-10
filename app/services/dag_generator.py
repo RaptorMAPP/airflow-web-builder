@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple, Optional
 import json
 import re
-
+import base64
 from .operator_specs import ARGS_TARGET_FIELD, imports_for_tasks, render_task_line
 from .render_utils import (
     argset_to_tokens,
@@ -21,6 +21,20 @@ import pendulum
 from airflow import DAG
 {extra_imports}{operator_imports}
 """
+
+def _embed_spec_b64_line(spec_in: Dict[str, Any]) -> str:
+    """Embebe la spec del builder en el DAG .py para permitir re-import 1:1.
+
+    Se usa base64(JSON) para mantenerlo como una sola línea, fácil de extraer sin ejecutar el código.
+    """
+    try:
+        raw = json.dumps(spec_in or {}, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        raw = "{}"
+    b64 = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    # IMPORTANTE: una sola línea para que el importador pueda leerlo con regex.
+    return f'__AIRFLOW_WEB_BUILDER_SPEC_B64__ = "{b64}"\n'
+
 
 
 def _render_python_callables(tasks: List[Dict[str, Any]]) -> str:
@@ -238,6 +252,9 @@ def _assets_expr(uris: List[str], logic: str = "OR") -> str:
 
 def build_dag_code(spec: Dict[str, Any]) -> str:
     """Genera un archivo .py de DAG a partir de la spec del builder."""
+
+    spec_meta_line = _embed_spec_b64_line(spec)
+
     spec, warn_dedupe = _normalize_spec(spec)
 
     dag_id = spec["dag_id"]
@@ -466,7 +483,9 @@ def build_dag_code(spec: Dict[str, Any]) -> str:
     max_active_runs_line = "    max_active_runs=1,\n" if assets_expr else ""
 
     # build code
-    code = f"""{warnings_block}{header}
+    code = f"""{warnings_block}{header}# === airflow-web-builder import metadata (do not remove) ===
+    {spec_meta_line}# === end metadata ===
+
 local_tz = pendulum.timezone({json.dumps(timezone)})
 
 default_args = {{

@@ -3,9 +3,14 @@
 {% block page_title %}Creador de DAGs{% endblock %}
 {% block page_subtitle %}Genera DAGs compatibles con Airflow 3.1{% endblock %}
 {% block header_actions %}
+  <button class="button ghost" id="btn_import">Importar .py/.json</button>
+  <button class="button ghost" id="btn_clear">Limpiar</button>
+
   <button class="button secondary" id="btn_preview">Previsualizar</button>
   <button class="button" id="btn_download">Descargar .py</button>
 {% endblock %}
+
+
 
 {% block head_extra %}
 <style>
@@ -32,11 +37,13 @@
   .form-grid-4 { display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:12px; }
   #out_code, #out_val { max-height:520px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
 </style>
-
+<script src="{{ url_for('static', filename='js/dag_import_ui.js') }}"></script>
 <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
 {% endblock %}
 
 {% block content %}
+<input id="import_file" type="file" accept=".py,.json" style="display:none"/>
+
 <div class="card" style="padding:0;">
   <!-- Tabs -->
   <div role="tablist" aria-label="Secciones" class="tabs-header">
@@ -332,6 +339,18 @@
             Si está activo, se agrega una tarea sensor <code>confirm</code> al inicio que espera una Variable por <code>run_id</code> antes de continuar.
           </div>
 
+          <div class="section-card" style="margin-top:12px;">
+            <div style="display:flex;gap:.5rem;align-items:center;">
+              <input id="mode_b_on" type="checkbox"/>
+              <label for="mode_b_on"><b>Opción B</b> — disparar por Asset y además correr cada 5 minutos (24x7)</label>
+            </div>
+            <div class="muted-note">
+              Al activarlo, el builder habilita <b>Assets</b> y configura un schedule cíclico <code>*/5</code> para todo el día.
+              Debes definir al menos 1 <b>Inlet</b> en la sección Assets.
+            </div>
+          </div>
+
+
 
           <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
             <button id="btn_build_cron" class="button">Generar cron</button>
@@ -457,15 +476,8 @@
 </div>
 {% endblock %}
 
-{% block footer_sticky %}
-<div class="footer-sticky">
-  <div>Estado: <span id="statusChip" class="tag">sin validar</span></div>
-  <div style="display:flex;gap:8px;">
-    <button class="button secondary" id="btn_preview_footer">Previsualizar</button>
-    <button class="button" id="btn_download_footer">Descargar .py</button>
-  </div>
-</div>
-{% endblock %}
+
+
 
 {% block scripts %}
 <script>
@@ -1243,6 +1255,15 @@ function taskIdOptions(){
     .map(i=>normId(i.value)).filter(Boolean)
     .filter((v,i,a)=>a.indexOf(v)===i);
 }
+
+window.__resMgr = initResDepsPanel();
+if(window.__resMgr){ window.__resMgr.refresh(taskIdOptions()); }
+
+window.__argMgr = initArgsDepsPanel();
+if(window.__argMgr){ window.__argMgr.refresh(taskIdOptions()); }
+
+
+
 function refreshTaskSelects(){
   const ids = taskIdOptions();
   document.querySelectorAll('#deps select[data-k="_sel"]').forEach(sel=>{
@@ -2062,6 +2083,48 @@ document.getElementById('add_asset_outlet')?.addEventListener('click', ()=>addAs
 setAssetsUiEnabled(!!document.getElementById('assets_on')?.checked);
 
 
+
+
+// Opción B: Assets + ciclo cada 5 minutos (24x7)
+function applyOptionB(on){
+  if(!on) return; // no deshace automáticamente
+
+  // 1) Habilitar Assets
+  const aOn = document.getElementById('assets_on');
+  if(aOn){
+    aOn.checked = true;
+    setAssetsUiEnabled(true);
+  }
+
+  // 2) Forzar un schedule cíclico cada 5 min en todo el día
+  const kind = document.getElementById('schedule_kind');
+  if(kind){
+    kind.value = '@daily';
+    showSchedGroups('@daily');
+  }
+
+  const cycOn = document.getElementById('cyclic_on');
+  if(cycOn) cycOn.checked = true;
+
+  const unit = document.getElementById('cyclic_unit');
+  if(unit) unit.value = 'minutes';
+
+  const n = document.getElementById('cyclic_n');
+  if(n) n.value = 5;
+
+  const f = document.getElementById('cyc_from');
+  if(f) f.value = 0;
+
+  const t = document.getElementById('cyc_to');
+  if(t) t.value = 23;
+
+  // ajustar UI por unidad y recalcular cron
+  if(typeof toggleCyclicUnitFields === 'function') toggleCyclicUnitFields();
+  if(typeof syncCronFromUI === 'function') syncCronFromUI();
+}
+
+document.getElementById('mode_b_on')?.addEventListener('change', (e)=> applyOptionB(!!e.target.checked));
+
 /* Recursos (Pools) - panel en Dependencies */
 function _findTaskCardById(taskId){
   const cards = Array.from(document.querySelectorAll('#tasks > .section-card'));
@@ -2519,7 +2582,7 @@ function collect(){
     if(e.downstream){ deps.push({ upstream: ets_id, downstream: e.downstream }); }
   });
 
-    
+
     // --- Assets (condiciones) ---
   const assets_enabled = !!document.getElementById('assets_on')?.checked;
   const asset_logic = (document.getElementById('asset_logic')?.value || 'OR').toUpperCase();
@@ -2599,14 +2662,766 @@ async function doPreview(){
 document.getElementById("btn_preview")?.addEventListener("click", doPreview);
 document.getElementById("btn_preview_footer")?.addEventListener("click", doPreview);
 
+function sanitizeFilename(name){
+  let s = String(name || '').trim();
+  if(!s) s = 'dag_generated';
+
+  // Quita caracteres inválidos en Windows/macOS/Linux para nombres de archivo
+  // y evita rutas/segmentos.
+  s = s.replace(/[\\\/:*?"<>|]+/g, "_");
+
+  // Limpia espacios repetidos
+  s = s.replace(/\s+/g, "_");
+
+  // Evita nombre vacío o solo puntos
+  s = s.replace(/^\.+$/, "dag_generated");
+
+  return s;
+}
+
+function filenameFromContentDisposition(cd){
+  if(!cd) return null;
+
+  // filename*=UTF-8''xxx
+  const m1 = cd.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if(m1 && m1[1]) {
+    try { return decodeURIComponent(m1[1].replace(/["']/g, '')); } catch { return m1[1]; }
+  }
+
+  // filename="xxx"
+  const m2 = cd.match(/filename\s*=\s*"([^"]+)"/i);
+  if(m2 && m2[1]) return m2[1];
+
+  // filename=xxx
+  const m3 = cd.match(/filename\s*=\s*([^;]+)/i);
+  if(m3 && m3[1]) return m3[1].trim().replace(/["']/g, '');
+
+  return null;
+}
+
 document.getElementById("btn_download")?.addEventListener("click", async ()=>{
   const spec = collect();
-  const r = await fetch("/api/builder/download", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(spec)});
+
+  const r = await fetch("/api/builder/download", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(spec)
+  });
+
+  if(!r.ok){
+    const t = await r.text().catch(()=> "");
+    alert(`Error download: ${r.status} ${t}`);
+    return;
+  }
+
   const blob = await r.blob();
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-  a.download = (spec.dag_id || "dag_generated") + ".py"; a.click();
+
+  // 1) Intenta usar filename desde el backend si existe
+  const cd = r.headers.get('Content-Disposition');
+  let fname = filenameFromContentDisposition(cd);
+
+  // 2) Fallback: dag_id sanitizado
+  if(!fname){
+    fname = sanitizeFilename(spec.dag_id) + ".py";
+  } else {
+    fname = sanitizeFilename(fname);
+    if(!fname.toLowerCase().endsWith('.py')) fname += '.py';
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fname;
+
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  // libera memoria
+  setTimeout(()=> URL.revokeObjectURL(url), 1000);
 });
-document.getElementById("btn_download_footer")?.addEventListener("click", ()=> document.getElementById("btn_download").click());
+
+  /* ===== Importar / Limpiar (separado) ===== */
+  function _ev(name){ return new Event(name,{bubbles:true}); }
+  function _setVal(id, val){
+    const e = document.getElementById(id);
+    if(!e) return;
+    if(e.type === 'checkbox'){
+      e.checked = !!val;
+      e.dispatchEvent(_ev('change'));
+      return;
+    }
+    e.value = (val === undefined || val === null) ? '' : String(val);
+    const isSelect = (e.tagName === 'SELECT');
+    e.dispatchEvent(_ev(isSelect ? 'change' : 'input'));
+    if(!isSelect) e.dispatchEvent(_ev('change'));
+  }
+  function _todayYmd(){
+    const now = new Date();
+    const y=now.getFullYear();
+    const m=String(now.getMonth()+1).padStart(2,'0');
+    const d=String(now.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
+  function _isObj(x){ return x && typeof x === 'object' && !Array.isArray(x); }
+  function _parseIntSafe(x, dflt){
+    const n = parseInt(String(x ?? ''),10);
+    return Number.isFinite(n) ? n : dflt;
+  }
+
+  /* Limpia todo y deja listo para crear/importar */
+  function resetBuilderUI(){
+    // General
+    ['dag_id','description','owner','app','subapp'].forEach(id=>_setVal(id,''));
+    _setVal('retries','1');
+    _setVal('retry_minutes','5');
+    _setVal('catchup', false);
+    _setVal('confirm_on', false);
+
+    const sd = document.getElementById('start_date');
+    if(sd){ sd.value = _todayYmd(); sd.dispatchEvent(_ev('change')); }
+
+    // Scheduling defaults
+    _setVal('sched_tz', window.builderState?.timezone || 'America/Santiago');
+    _setVal('schedule_kind','@daily');
+    _setVal('t_hh','9'); _setVal('t_mm','0');
+    _setVal('h_mm','0'); _setVal('h_start','');
+    _setVal('w_dow','1');
+    _setVal('m_dom','1');
+    _setVal('y_mon','1');
+    _setVal('y_dom','1');
+    _setVal('cyclic_on', false);
+    _setVal('cyclic_unit','minutes');
+    _setVal('cyclic_n','15');
+    _setVal('cyclic_at_mm','0');
+    _setVal('cyc_from','0');
+    _setVal('cyc_to','23');
+    _setVal('once_hh','9');
+    _setVal('once_mm','0');
+    _setVal('times_list','');
+    document.querySelectorAll('input[name="times_dow"]').forEach(cb=>{
+      cb.checked = ['1','2','3','4','5'].includes(cb.value);
+      cb.dispatchEvent(_ev('change'));
+    });
+
+    // Assets
+    _setVal('assets_on', false);
+    _setVal('asset_logic', 'OR');
+    const ap = document.getElementById('asset_prefix');
+    if(ap && !ap.value) ap.value = 'asset://cond/';
+    document.getElementById('asset_inlets')?.replaceChildren();
+    document.getElementById('asset_outlets')?.replaceChildren();
+    setAssetsUiEnabled(!!document.getElementById('assets_on')?.checked);
+
+    // Clear sections
+    document.getElementById('tasks')?.replaceChildren();
+    document.getElementById('deps')?.replaceChildren();
+    document.getElementById('extdeps')?.replaceChildren();
+
+    // Reset state/counters
+    tcount = 0;
+    window.builderState.schedule = '@daily';
+    window.builderState.params = {};
+    window.builderState.argsets = {};
+    window.__globalParamsMgr?.render?.();
+    window.__globalArgsetsMgr?.render?.();
+
+    refreshTaskSelects();
+    updateGraph();
+
+    const oc = document.getElementById('out_code'); if(oc) oc.textContent = '—';
+    const ov = document.getElementById('out_val');  if(ov) ov.textContent = '—';
+    const st = document.getElementById('statusChip'); if(st) st.textContent = 'sin validar';
+  }
+
+  /* Detecta ExternalTaskSensor “generado por externas” y lo convierte a extdeps UI */
+  function preprocessImportedTasksAndDeps(spec){
+    const tasks = Array.isArray(spec.tasks) ? spec.tasks : [];
+    const deps  = Array.isArray(spec.dependencies) ? spec.dependencies : [];
+
+    const extdeps = [];
+    const keepTasks = [];
+    const removedTaskIds = new Set();
+
+    tasks.forEach(t=>{
+      if(!t || t.type !== 'ExternalTaskSensor') { keepTasks.push(t); return; }
+      const hasExt = !!(t.external_dag_id || t.external_task_id || t.mode || t.poke_interval || t.timeout);
+      if(!hasExt){ keepTasks.push(t); return; }
+
+      const tid = String(t.task_id||'');
+      const out = deps.filter(d => d && String(d.upstream||'')===tid && d.downstream);
+      if(!out.length){ keepTasks.push(t); return; }
+
+      out.forEach(d=>{
+        extdeps.push({
+          external_dag_id: t.external_dag_id || '',
+          external_task_id: t.external_task_id || '',
+          mode: t.mode || 'reschedule',
+          poke_interval: t.poke_interval || '60',
+          timeout: t.timeout || '3600',
+          downstream: d.downstream || ''
+        });
+      });
+      removedTaskIds.add(tid);
+    });
+
+    const finalTasks = keepTasks.filter(t => t && !removedTaskIds.has(String(t.task_id||'')));
+    const finalDeps = deps.filter(d => {
+      if(!d) return false;
+      const u = String(d.upstream||'');
+      const v = String(d.downstream||'');
+      if(!u || !v) return false;
+      if(removedTaskIds.has(u) || removedTaskIds.has(v)) return false;
+      return true;
+    });
+
+    return { tasks: finalTasks, dependencies: finalDeps, extdeps };
+  }
+
+  /* Helpers @times */
+  function _setTimesDowFromField(dowField){
+    const all = Array.from(document.querySelectorAll('input[name="times_dow"]'));
+    if(!all.length) return;
+    const s = String(dowField||'').trim();
+    let set = new Set();
+    if(!s || s === '*'){
+      set = new Set(['0','1','2','3','4','5','6']);
+    } else if(s.includes('-')){
+      const [a,b] = s.split('-').map(v=>_parseIntSafe(v,0));
+      for(let i=Math.min(a,b); i<=Math.max(a,b); i++) set.add(String(i));
+    } else if(s.includes(',')){
+      s.split(',').forEach(v=>{ const n=_parseIntSafe(v,-1); if(n>=0) set.add(String(n)); });
+    } else {
+      const n=_parseIntSafe(s,-1); if(n>=0) set.add(String(n));
+    }
+    all.forEach(cb=>{ cb.checked = set.has(cb.value); cb.dispatchEvent(_ev('change')); });
+  }
+  function _expandHourField(field){
+    const s = String(field||'').trim();
+    const out = new Set();
+    if(!s || s==='*'){
+      for(let i=0;i<=23;i++) out.add(i);
+      return [...out];
+    }
+    s.split(',').forEach(tok=>{
+      tok = tok.trim();
+      if(!tok) return;
+      if(tok.includes('-')){
+        const [range, stepPart] = tok.split('/');
+        const [a,b] = range.split('-');
+        const A=_parseIntSafe(a,0), B=_parseIntSafe(b,0);
+        const step = stepPart ? _parseIntSafe(stepPart,1) : 1;
+        for(let i=Math.min(A,B); i<=Math.max(A,B); i+=Math.max(1,step)) out.add(i);
+      } else if(tok.includes('/')){
+        const [base, stepPart] = tok.split('/');
+        const step = _parseIntSafe(stepPart,1);
+        if(base==='*'){
+          for(let i=0;i<=23;i+=Math.max(1,step)) out.add(i);
+        }
+      } else {
+        const n=_parseIntSafe(tok,-1);
+        if(n>=0) out.add(n);
+      }
+    });
+    return [...out].sort((a,b)=>a-b);
+  }
+
+  /* Aplica Scheduling a la UI desde spec.schedule */
+  async function applyScheduleFromImportedSpec(spec){
+    const schedule = String((spec.schedule ?? '@daily')).trim();
+
+    if(spec.start_date) _setVal('start_date', spec.start_date);
+    if(spec.timezone) _setVal('sched_tz', spec.timezone);
+
+    const kindSel = document.getElementById('schedule_kind');
+    if(!kindSel) return;
+
+    const setKind = (k)=>{ kindSel.value = k; kindSel.dispatchEvent(_ev('change')); };
+
+    const kindFromFields = (dom, mon, dow)=>{
+      if(dom==='*' && mon==='*' && dow==='*') return '@daily';
+      if(dom==='*' && mon==='*' && dow!=='*') return '@weekly';
+      if(dom!=='*' && mon==='*') return '@monthly';
+      if(dom!=='*' && mon!=='*') return '@yearly';
+      return '@daily';
+    };
+
+    if(schedule === 'None'){
+      setKind('@none');
+      return;
+    }
+
+    if(schedule === '@once'){
+      setKind('@once');
+      const st = String(spec.start_time||'').trim();
+      const m = st.match(/^(\d{1,2}):(\d{2})$/);
+      if(m){ _setVal('once_hh', _parseIntSafe(m[1],9)); _setVal('once_mm', _parseIntSafe(m[2],0)); }
+      return;
+    }
+
+    if(schedule.startsWith('CAL|') || schedule.startsWith('CALC|')){
+      setKind('@calendar');
+      const parts = schedule.split('|');
+      const cal = (parts[1] || '').trim();
+      await loadCalendarsIntoSelect(cal);
+      _setVal('calendar_name', cal);
+
+      if(schedule.startsWith('CAL|')){
+        const hm = (parts[2] || '00:00').trim();
+        const [hhS, mmS] = hm.split(':');
+        _setVal('t_hh', _parseIntSafe(hhS,0));
+        _setVal('t_mm', _parseIntSafe(mmS,0));
+        _setVal('cyclic_on', false);
+        return;
+      }
+
+      // CALC|<cal>|<unit>|<N>|<from>|<to>|<at_mm>
+      _setVal('cyclic_on', true);
+      _setVal('cyclic_unit', (parts[2] || 'minutes').trim());
+      _setVal('cyclic_n', _parseIntSafe(parts[3], 15));
+      _setVal('cyc_from', _parseIntSafe(parts[4], 0));
+      _setVal('cyc_to', _parseIntSafe(parts[5], 23));
+      _setVal('cyclic_at_mm', _parseIntSafe(parts[6], 0));
+      return;
+    }
+
+    if(schedule.startsWith('MULTI|')){
+      setKind('@times');
+      const list = schedule.slice(6).split('||').map(s=>s.trim()).filter(Boolean);
+      const times = [];
+      let dowField = '';
+      list.forEach(cr=>{
+        const p = cr.split(/\s+/);
+        if(p.length < 5) return;
+        const mm = _parseIntSafe(p[0],0);
+        const hours = _expandHourField(p[1]);
+        if(!dowField) dowField = p[4];
+        hours.forEach(h=>{
+          times.push(`${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`);
+        });
+      });
+      _setVal('times_list', [...new Set(times)].sort().join(', '));
+      if(dowField) _setTimesDowFromField(dowField);
+
+      const pre = document.getElementById('times_crons');
+      if(pre) pre.textContent = list.join('\n');
+      return;
+    }
+
+    // Cron simple
+    const p = schedule.split(/\s+/);
+    if(p.length >= 5){
+      const [minF, hourF, domF, monF, dowF] = p;
+
+      // cyclic minutes: */N F-T ...
+      const mCycMin = minF.match(/^\*\/(\d+)$/);
+      const mHourRange = hourF.match(/^(\d+)-(\d+)$/);
+      if(mCycMin){
+        const N=_parseIntSafe(mCycMin[1],15);
+        let F=0, T=23;
+        if(mHourRange){ F=_parseIntSafe(mHourRange[1],0); T=_parseIntSafe(mHourRange[2],23); }
+        const k = kindFromFields(domF, monF, dowF);
+        setKind(k);
+        if(k==='@weekly') _setVal('w_dow', dowF);
+        if(k==='@monthly') _setVal('m_dom', domF);
+        if(k==='@yearly'){ _setVal('y_dom', domF); _setVal('y_mon', monF); }
+        _setVal('cyclic_on', true);
+        _setVal('cyclic_unit', 'minutes');
+        _setVal('cyclic_n', N);
+        _setVal('cyc_from', F);
+        _setVal('cyc_to', T);
+        return;
+      }
+
+      // cyclic hours: mm */N ... OR mm F-T/N ...
+      const mCycHour1 = hourF.match(/^\*\/(\d+)$/);
+      const mCycHour2 = hourF.match(/^(\d+)-(\d+)\/(\d+)$/);
+      if(mCycHour1 || mCycHour2){
+        const N = _parseIntSafe(mCycHour1 ? mCycHour1[1] : mCycHour2[3], 1);
+        let F=0, T=23;
+        if(mCycHour2){ F=_parseIntSafe(mCycHour2[1],0); T=_parseIntSafe(mCycHour2[2],23); }
+        const mm = _parseIntSafe(minF,0);
+        const k = kindFromFields(domF, monF, dowF);
+        setKind(k);
+        if(k==='@weekly') _setVal('w_dow', dowF);
+        if(k==='@monthly') _setVal('m_dom', domF);
+        if(k==='@yearly'){ _setVal('y_dom', domF); _setVal('y_mon', monF); }
+        _setVal('cyclic_on', true);
+        _setVal('cyclic_unit', 'hours');
+        _setVal('cyclic_at_mm', mm);
+        _setVal('cyclic_n', N);
+        _setVal('cyc_from', F);
+        _setVal('cyc_to', T);
+        return;
+      }
+
+      // hour list => @times (cuando es * * en dom/mon)
+      if(hourF.includes(',') && domF==='*' && monF==='*'){
+        setKind('@times');
+        const mm = _parseIntSafe(minF,0);
+        const hours = _expandHourField(hourF);
+        _setVal('times_list', hours.map(h=>`${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`).join(', '));
+        _setTimesDowFromField(dowF);
+        const pre = document.getElementById('times_crons');
+        if(pre) pre.textContent = schedule;
+        return;
+      }
+
+      // hourly (mm * * * *) o (mm HS-23 * * *)
+      if(domF==='*' && monF==='*' && dowF==='*'){
+        const hrStart = hourF.match(/^(\d+)-23$/);
+        if(hourF==='*' || hrStart){
+          setKind('@hourly');
+          _setVal('h_mm', _parseIntSafe(minF,0));
+          _setVal('h_start', hrStart ? _parseIntSafe(hrStart[1],0) : '');
+          return;
+        }
+      }
+
+      // daily/weekly/monthly/yearly simples
+      const mm=_parseIntSafe(minF,0);
+      if(domF==='*' && monF==='*' && dowF==='*' && /^\d+$/.test(hourF)){
+        setKind('@daily'); _setVal('t_hh', _parseIntSafe(hourF,9)); _setVal('t_mm', mm); return;
+      }
+      if(domF==='*' && monF==='*' && dowF!=='*' && /^\d+$/.test(hourF)){
+        setKind('@weekly'); _setVal('w_dow', dowF); _setVal('t_hh', _parseIntSafe(hourF,9)); _setVal('t_mm', mm); return;
+      }
+      if(domF!=='*' && monF==='*' && dowF==='*' && /^\d+$/.test(hourF)){
+        setKind('@monthly'); _setVal('m_dom', domF); _setVal('t_hh', _parseIntSafe(hourF,9)); _setVal('t_mm', mm); return;
+      }
+      if(domF!=='*' && monF!=='*' && dowF==='*' && /^\d+$/.test(hourF)){
+        setKind('@yearly'); _setVal('y_mon', monF); _setVal('y_dom', domF); _setVal('t_hh', _parseIntSafe(hourF,9)); _setVal('t_mm', mm); return;
+      }
+    }
+
+    // fallback (no round-trip perfecto)
+    const cp = document.getElementById('cron_preview');
+    if(cp){ cp.textContent = schedule; cp.title = schedule; }
+    window.builderState.schedule = schedule;
+  }
+
+  /* Aplica spec a la UI */
+  async function applyImportedSpec(raw){
+    if(!_isObj(raw)) throw new Error('El import no es un objeto JSON válido.');
+    const spec = (_isObj(raw.config) ? raw.config : raw);
+
+    resetBuilderUI();
+
+    // General
+    _setVal('dag_id', spec.dag_id || '');
+    _setVal('description', spec.description || '');
+    _setVal('owner', spec.owner || '');
+
+    let app = spec.app || '';
+    let subapp = spec.subapp || '';
+    if((!app || !subapp) && Array.isArray(spec.tags)){
+      const tApp = spec.tags.find(t => String(t).startsWith('app:'));
+      const tSub = spec.tags.find(t => String(t).startsWith('subapp:'));
+      if(!app && tApp) app = String(tApp).slice(4);
+      if(!subapp && tSub) subapp = String(tSub).slice(7);
+    }
+    _setVal('app', app);
+    _setVal('subapp', subapp);
+
+    _setVal('retries', spec.retries ?? 1);
+    _setVal('retry_minutes', spec.retry_minutes ?? spec.retry_delay_minutes ?? 5);
+    _setVal('catchup', !!spec.catchup);
+    _setVal('confirm_on', !!spec.confirm);
+
+    // globals
+    if(_isObj(spec.params)) window.builderState.params = spec.params;
+    if(_isObj(spec.argsets)) window.builderState.argsets = spec.argsets;
+    window.__globalParamsMgr?.render?.();
+    window.__globalArgsetsMgr?.render?.();
+
+    // schedule
+    await applyScheduleFromImportedSpec(spec);
+
+    // assets
+    _setVal('assets_on', !!spec.assets_enabled);
+    _setVal('asset_logic', spec.asset_logic || 'OR');
+    if(typeof spec.asset_prefix === 'string') _setVal('asset_prefix', spec.asset_prefix);
+
+    // tasks/deps/extdeps
+    const prep = preprocessImportedTasksAndDeps(spec);
+
+    (prep.tasks || []).forEach(t=>{
+      const type = (t && t.type) ? String(t.type) : 'EmptyOperator';
+      addTask(type);
+      const card = document.querySelector('#tasks > .section-card:last-child');
+      if(!card || !t) return;
+
+      Object.keys(t).forEach(k=>{
+        const v = t[k];
+        const sel = '[data-k="' + String(k).replace(/"/g,'\\"') + '"]';
+        const elx = card.querySelector(sel);
+        if(!elx) return;
+        elx.value = (v === undefined || v === null) ? '' : String(v);
+      });
+
+      const tidInp = card.querySelector('[data-k="task_id"]');
+      if(tidInp) tidInp.value = normId(tidInp.value);
+    });
+
+    refreshTaskSelects();
+
+    (prep.dependencies || []).forEach(d=>{
+      addDep();
+      const card = document.querySelector('#deps > .section-card:last-child');
+      if(!card || !d) return;
+      const sels = card.querySelectorAll('select[data-k="_sel"]');
+      if(sels[0]) sels[0].value = d.upstream || '';
+      if(sels[1]) sels[1].value = d.downstream || '';
+    });
+
+    (prep.extdeps || []).forEach(ed=>{
+      addExternalDep();
+      const card = document.querySelector('#extdeps > .section-card:last-child');
+      if(!card || !ed) return;
+      ['external_dag_id','external_task_id','mode','poke_interval','timeout'].forEach(k=>{
+        const elx = card.querySelector('[data-k="'+k+'"]');
+        if(elx) elx.value = (ed[k] === undefined || ed[k] === null) ? '' : String(ed[k]);
+      });
+      const down = card.querySelector('select[data-k="downstream"]');
+      if(down) down.value = ed.downstream || '';
+    });
+
+    // assets rows (inlets/outlets por task)
+    if(!!spec.assets_enabled){
+      document.getElementById('asset_inlets')?.replaceChildren();
+      document.getElementById('asset_outlets')?.replaceChildren();
+
+      const inRows = [];
+      const outRows = [];
+      (spec.tasks || []).forEach(t=>{
+        const tid = t?.task_id;
+        (Array.isArray(t?.inlets) ? t.inlets : []).forEach(u=> inRows.push({task_id:tid, uri:u}));
+        (Array.isArray(t?.outlets) ? t.outlets : []).forEach(u=> outRows.push({task_id:tid, uri:u}));
+      });
+
+      inRows.forEach(r=>{
+        addAssetLinkRow('asset_inlets','inlet');
+        const card = document.querySelector('#asset_inlets > .section-card:last-child');
+        const sel = card?.querySelector('select[data-k="task_id"]');
+        const inp = card?.querySelector('input[data-k="uri"]');
+        if(sel) sel.value = r.task_id || '';
+        if(inp) inp.value = r.uri || '';
+      });
+      outRows.forEach(r=>{
+        addAssetLinkRow('asset_outlets','outlet');
+        const card = document.querySelector('#asset_outlets > .section-card:last-child');
+        const sel = card?.querySelector('select[data-k="task_id"]');
+        const inp = card?.querySelector('input[data-k="uri"]');
+        if(sel) sel.value = r.task_id || '';
+        if(inp) inp.value = r.uri || '';
+      });
+      setAssetsUiEnabled(true);
+    } else {
+      setAssetsUiEnabled(false);
+    }
+
+    refreshTaskSelects();
+    window.__resMgr?.refresh?.(taskIdOptions());
+    window.__argMgr?.refresh?.(taskIdOptions());
+    updateGraph();
+
+    const st = document.getElementById('statusChip');
+    if(st) st.textContent = 'importado';
+  }
+
+  /* Import .py best-effort: básico (dag_id, schedule, tasks, deps) */
+  function parsePythonDagToSpec(pyText){
+    const pad2 = (n)=>String(n).padStart(2,'0');
+    const spec = {
+      dag_id:'', description:'', owner:'',
+      app:'', subapp:'',
+      retries:1, retry_minutes:5,
+      start_date:'', schedule:'@daily', start_time:'',
+      catchup:false, confirm:false,
+      timezone:'UTC', tags:[],
+      params:{}, argsets:{},
+      assets_enabled:false, asset_logic:'OR', asset_prefix:'asset://cond/', asset_inlets:[],
+      tasks:[], dependencies:[]
+    };
+
+    let m = pyText.match(/\bdag_id\s*=\s*['"]([^'"]+)['"]/);
+    if(!m) m = pyText.match(/\bDAG\(\s*['"]([^'"]+)['"]/);
+    if(m) spec.dag_id = m[1];
+
+    m = pyText.match(/\bdescription\s*=\s*['"]([^'"]*)['"]/);
+    if(m) spec.description = m[1];
+
+    m = pyText.match(/\bowner\s*=\s*['"]([^'"]+)['"]/);
+    if(m) spec.owner = m[1];
+
+    m = pyText.match(/\bcatchup\s*=\s*(True|False)\b/);
+    if(m) spec.catchup = (m[1] === 'True');
+
+    m = pyText.match(/\bretries\s*=\s*(\d+)\b/);
+    if(m) spec.retries = parseInt(m[1],10);
+
+    m = pyText.match(/\bretry_delay\s*=\s*timedelta\(\s*minutes\s*=\s*(\d+)/);
+    if(m) spec.retry_minutes = parseInt(m[1],10);
+
+    m = pyText.match(/\btimezone\s*=\s*['"]([^'"]+)['"]/);
+    if(m) spec.timezone = m[1];
+
+    m = pyText.match(/\bstart_date\s*=\s*datetime\(\s*(\d{4})\s*,\s*(\d{1,2})\s*,\s*(\d{1,2})/);
+    if(m){
+      spec.start_date = `${m[1]}-${pad2(parseInt(m[2],10))}-${pad2(parseInt(m[3],10))}`;
+    }
+
+    m = pyText.match(/\bschedule(?:_interval)?\s*=\s*(None|['"][^'"]+['"])/);
+    if(m){
+      if(m[1] === 'None') spec.schedule = 'None';
+      else spec.schedule = m[1].slice(1,-1);
+    }
+
+    const tasks = [];
+    const varToTaskId = new Map();
+    const reAssign = /\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_\.]+)\s*\(/g;
+    const isOperator = (cls)=>/(Operator|Sensor)$/i.test(cls) || cls === 'ExternalTaskSensor';
+    let mm;
+    while((mm = reAssign.exec(pyText))){
+      const varName = mm[1];
+      const cls = mm[2].split('.').pop();
+      if(!isOperator(cls)) continue;
+
+      const openIdx = reAssign.lastIndex - 1; // '('
+      let i = openIdx, depth = 0, inS = false, sChar = '';
+      for(; i<pyText.length; i++){
+        const ch = pyText[i];
+        if(inS){
+          if(ch === '\\\\'){ i += 1; continue; }
+          if(ch === sChar) inS = false;
+          continue;
+        }
+        if(ch === '"' || ch === "'"){ inS = true; sChar = ch; continue; }
+        if(ch === '('){ depth += 1; continue; }
+        if(ch === ')'){
+          depth -= 1;
+          if(depth === 0){ i += 1; break; }
+        }
+      }
+      const callBody = pyText.slice(openIdx+1, i-1);
+      let taskId = varName;
+      const mt = callBody.match(/\btask_id\s*=\s*['"]([^'"]+)['"]/);
+      if(mt) taskId = mt[1];
+
+      const t = { type: cls, task_id: taskId };
+      const mb = callBody.match(/\bbash_command\s*=\s*['"]([\s\S]*?)['"]/);
+      if(mb) t.bash_command = mb[1];
+
+      tasks.push(t);
+      varToTaskId.set(varName, taskId);
+    }
+    spec.tasks = tasks;
+
+    // deps con >> / << (simple)
+    const deps = [];
+    const lines = pyText.split(/\r?\n/);
+    const extractNames = (expr)=>{
+      const out = [];
+      const re = /[A-Za-z_][A-Za-z0-9_]*/g;
+      let m2;
+      while((m2 = re.exec(expr||''))) out.push(m2[0]);
+      return out;
+    };
+    for(const raw of lines){
+      const line = raw.split('#')[0];
+      if(!line.includes('>>') && !line.includes('<<')) continue;
+
+      const dir = line.includes('>>') ? '>>' : '<<';
+      const parts = line.split(dir).map(s=>s.trim()).filter(Boolean);
+      if(parts.length < 2) continue;
+
+      const seq = parts.map(extractNames).filter(a=>a.length);
+      if(seq.length < 2) continue;
+
+      for(let j=0;j<seq.length-1;j++){
+        const left = seq[j];
+        const right = seq[j+1];
+        for(const L of left){
+          for(const R of right){
+            const upVar = (dir==='>>') ? L : R;
+            const dnVar = (dir==='>>') ? R : L;
+            const up = varToTaskId.get(upVar) || upVar;
+            const dn = varToTaskId.get(dnVar) || dnVar;
+            deps.push({upstream: up, downstream: dn});
+          }
+        }
+      }
+    }
+    const seen = new Set();
+    spec.dependencies = deps.filter(d=>{
+      const k = `${d.upstream}>>${d.downstream}`;
+      if(seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
+    return spec;
+  }
+
+  async function handleImportFile(file){
+  const name = (file?.name || '').toLowerCase();
+
+  // JSON directo
+  if(name.endsWith('.json')){
+    const txt = await file.text();
+    const obj = JSON.parse(txt);
+    await applyImportedSpec(obj);
+    return;
+  }
+
+  // PY: backend AST -> spec
+  if(name.endsWith('.py')){
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await fetch('/api/import-dag', { method:'POST', body: fd });
+    if(!r.ok){
+      const t = await r.text();
+      throw new Error(`Import backend error: ${r.status} ${t}`);
+    }
+    const spec = await r.json();
+    await applyImportedSpec(spec);
+    return;
+  }
+
+  throw new Error('Formato no soportado: usa .json o .py');
+}
+
+
+  /* Wiring botones */
+  document.getElementById('btn_import')?.addEventListener('click', (e)=>{
+    e.preventDefault();
+    const f = document.getElementById('import_file');
+    if(f){ f.value=''; f.click(); }
+  });
+  document.getElementById('btn_import_footer')?.addEventListener('click', ()=> document.getElementById('btn_import')?.click());
+
+  document.getElementById('btn_clear')?.addEventListener('click', (e)=>{
+    e.preventDefault();
+    resetBuilderUI();
+  });
+  document.getElementById('btn_clear_footer')?.addEventListener('click', ()=> document.getElementById('btn_clear')?.click());
+
+  document.getElementById('import_file')?.addEventListener('change', async (e)=>{
+    const file = e.target.files?.[0];
+    if(!file) return;
+    const st = document.getElementById('statusChip');
+    if(st) st.textContent = 'importando...';
+    try{
+      await handleImportFile(file);
+    }catch(err){
+      console.error(err);
+      if(st) st.textContent = 'error import';
+      alert(String(err?.message || err));
+    }finally{
+      e.target.value = '';
+    }
+  });
+  /* ===== fin Importar / Limpiar (separado) ===== */
 
 /* Switch Código/Validación */
 document.getElementById("btn_show_code")?.addEventListener("click", ()=>{
@@ -2707,4 +3522,6 @@ document.getElementById('themeToggle')?.addEventListener('click', ()=>{ setTimeo
   }
 })();
 </script>
+<script src="{{ url_for('static', filename='js/dag_importer_full.js') }}"></script>
+
 {% endblock %}
