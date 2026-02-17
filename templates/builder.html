@@ -3,11 +3,11 @@
 {% block page_title %}Creador de DAGs{% endblock %}
 {% block page_subtitle %}Genera DAGs compatibles con Airflow 3.1{% endblock %}
 {% block header_actions %}
-  <button class="button ghost" id="btn_import">Importar .py/.json</button>
-  <button class="button ghost" id="btn_clear">Limpiar</button>
+  <button type="button" class="button ghost" id="btn_import">Importar .py/.json</button>
+  <button type="button" class="button ghost" id="btn_clear">Limpiar</button>
 
-  <button class="button secondary" id="btn_preview">Previsualizar</button>
-  <button class="button" id="btn_download">Descargar .py</button>
+  <button type="button" class="button secondary" id="btn_preview">Previsualizar</button>
+  <button type="button" class="button" id="btn_download">Descargar .py</button>
 {% endblock %}
 
 
@@ -47,7 +47,7 @@
 <div class="card" style="padding:0;">
   <!-- Tabs -->
   <div role="tablist" aria-label="Secciones" class="tabs-header">
-    <button role="tab" class="tab" data-tab="general" aria-selected="true">General</button>
+    <button role="tab" class="tab" data-tab="general" type="button" aria-selected="true">General</button>
     <button role="tab" class="tab" data-tab="schedule">Scheduling</button>
     <button role="tab" class="tab" data-tab="tasks">Tasks</button>
     <button role="tab" class="tab" data-tab="deps">Dependencies</button>
@@ -468,8 +468,8 @@
 <div class="card" style="margin-top:12px;">
   <h3 style="margin-top:0;">Preview / Validación</h3>
   <div style="display:flex;gap:8px;margin-bottom:8px;">
-    <button class="button secondary" id="btn_show_code">Código</button>
-    <button class="button secondary" id="btn_show_val">Validación</button>
+    <button type="button" class="button secondary" id="btn_show_code">Código</button>
+    <button type="button" class="button secondary" id="btn_show_val">Validación</button>
   </div>
   <pre id="out_code">—</pre>
   <pre id="out_val" style="display:none">—</pre>

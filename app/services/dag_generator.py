@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Tuple, Optional
 import json
 import re
 import base64
+import pprint
 from .operator_specs import ARGS_TARGET_FIELD, imports_for_tasks, render_task_line
 from .render_utils import (
     argset_to_tokens,
@@ -215,6 +216,31 @@ def _parse_calendar_schedule(schedule: str) -> Optional[Dict[str, Any]]:
 
 
 
+
+def _parse_email_list(val: Any) -> List[str]:
+    """Acepta lista o string (separado por , ; \n)"""
+    if val is None:
+        return []
+    if isinstance(val, list):
+        raw = val
+    else:
+        raw = re.split(r"[\n,;]+", str(val))
+    out: List[str] = []
+    for x in raw:
+        x = str(x).strip()
+        if x:
+            out.append(x)
+    # dedupe preserving order
+    seen: set[str] = set()
+    ded: List[str] = []
+    for e in out:
+        if e in seen:
+            continue
+        seen.add(e)
+        ded.append(e)
+    return ded
+
+
 def _parse_asset_list(val: Any) -> List[str]:
     if val is None:
         return []
@@ -303,6 +329,24 @@ def build_dag_code(spec: Dict[str, Any]) -> str:
     if needs_asset_import:
         extra_imports += "from airflow.sdk import Asset\n\n"
 
+    # Notificaciones (email) / Alertas de duración (SLA)
+    notify_emails = _parse_email_list(spec.get("notify_emails"))
+    notify_dag_success = _is_truthy(spec.get("notify_dag_success", False))
+    notify_dag_failure = _is_truthy(spec.get("notify_dag_failure", False))
+
+    task_notify_any = False
+    sla_any = False
+    for _t in spec.get("tasks") or []:
+        if _is_truthy(_t.get("notify_on_success")) or _is_truthy(_t.get("notify_on_failure")):
+            task_notify_any = True
+        dm = _t.get("duration_alert_minutes")
+        if dm not in (None, "", 0, "0", False):
+            sla_any = True
+
+    needs_notify = bool(notify_emails) and (notify_dag_success or notify_dag_failure or task_notify_any or sla_any)
+    if needs_notify:
+        extra_imports += "from airflow.utils.email import send_email\n\n"
+
     timetable_expr = None
     schedule_render = None
 
@@ -390,6 +434,71 @@ def build_dag_code(spec: Dict[str, Any]) -> str:
 
 """
 
+    if needs_notify:
+        pydefs += "NOTIFY_EMAILS = " + pprint.pformat(notify_emails, width=100) + "\n\n"
+        pydefs += """def _send_notify(subject: str, html: str) -> None:
+    if not NOTIFY_EMAILS:
+        return
+    try:
+        send_email(to=NOTIFY_EMAILS, subject=subject, html_content=html)
+    except Exception as exc:
+        # no romper el DAG por error de email
+        print(f"[notify] error enviando email: {exc}")
+        return
+
+
+def _notify_task_success(context: dict) -> None:
+    ti = context.get('ti') or context.get('task_instance')
+    dag_id = getattr(ti, 'dag_id', '') if ti else ''
+    task_id = getattr(ti, 'task_id', '') if ti else ''
+    run_id = getattr(context.get('dag_run'), 'run_id', '') if context.get('dag_run') else ''
+    log_url = getattr(ti, 'log_url', '') if ti else ''
+    subject = f"[Airflow] Task OK {dag_id}.{task_id} ({run_id})"
+    html = f"<h3>Task OK</h3><ul><li><b>DAG</b>: {dag_id}</li><li><b>Task</b>: {task_id}</li><li><b>Run</b>: {run_id}</li><li><b>Logs</b>: <a href='{log_url}'>{log_url}</a></li></ul>"
+    _send_notify(subject, html)
+
+
+def _notify_task_failure(context: dict) -> None:
+    ti = context.get('ti') or context.get('task_instance')
+    dag_id = getattr(ti, 'dag_id', '') if ti else ''
+    task_id = getattr(ti, 'task_id', '') if ti else ''
+    run_id = getattr(context.get('dag_run'), 'run_id', '') if context.get('dag_run') else ''
+    log_url = getattr(ti, 'log_url', '') if ti else ''
+    subject = f"[Airflow] Task FAIL {dag_id}.{task_id} ({run_id})"
+    html = f"<h3>Task FAIL</h3><ul><li><b>DAG</b>: {dag_id}</li><li><b>Task</b>: {task_id}</li><li><b>Run</b>: {run_id}</li><li><b>Logs</b>: <a href='{log_url}'>{log_url}</a></li></ul>"
+    _send_notify(subject, html)
+
+
+def _notify_dag_success(context: dict) -> None:
+    dag = context.get('dag')
+    dag_id = getattr(dag, 'dag_id', '') if dag else ''
+    run_id = getattr(context.get('dag_run'), 'run_id', '') if context.get('dag_run') else ''
+    subject = f"[Airflow] DAG OK {dag_id} ({run_id})"
+    html = f"<h3>DAG OK</h3><ul><li><b>DAG</b>: {dag_id}</li><li><b>Run</b>: {run_id}</li></ul>"
+    _send_notify(subject, html)
+
+
+def _notify_dag_failure(context: dict) -> None:
+    dag = context.get('dag')
+    dag_id = getattr(dag, 'dag_id', '') if dag else ''
+    run_id = getattr(context.get('dag_run'), 'run_id', '') if context.get('dag_run') else ''
+    subject = f"[Airflow] DAG FAIL {dag_id} ({run_id})"
+    html = f"<h3>DAG FAIL</h3><ul><li><b>DAG</b>: {dag_id}</li><li><b>Run</b>: {run_id}</li></ul>"
+    _send_notify(subject, html)
+
+
+def _sla_miss(dag, task_list, blocking_task_list, slas, blocking_tis) -> None:
+    dag_id = getattr(dag, 'dag_id', '') if dag else ''
+    try:
+        tasks = [getattr(s, 'task_id', str(s)) for s in (slas or [])]
+    except Exception:
+        tasks = []
+    subject = f"[Airflow] SLA MISS {dag_id} ({len(tasks)} task/s)"
+    html = "<h3>SLA MISS</h3>" + "<p><b>DAG</b>: %s</p>" % dag_id + "<ul>" + "".join([f"<li>{t}</li>" for t in tasks]) + "</ul>"
+    _send_notify(subject, html)
+
+"""
+
     # apply params/argsets per task
     global_params = spec.get("params") or {}
     argsets = spec.get("argsets") or {}
@@ -412,6 +521,22 @@ def build_dag_code(spec: Dict[str, Any]) -> str:
         if task_params is None:
             task_params = t.get("params")
         params_merged = merge_params(global_params, task_params)
+
+        # Notificaciones / alertas de duración
+        if needs_notify:
+            ns = ov.get("notify_on_success", t.get("notify_on_success", False))
+            nf = ov.get("notify_on_failure", t.get("notify_on_failure", False))
+            if _is_truthy(ns):
+                t["on_success_callback"] = "_notify_task_success"
+            if _is_truthy(nf):
+                t["on_failure_callback"] = "_notify_task_failure"
+
+            dm = ov.get("duration_alert_minutes", t.get("duration_alert_minutes"))
+            if dm not in (None, "", 0, "0", False):
+                try:
+                    t["sla_minutes"] = int(dm)
+                except Exception:
+                    pass
 
         # argset: apply only for command-like operators
         argset_ref = (ov.get("argset_ref") or t.get("argset_ref") or "").strip()
@@ -481,6 +606,14 @@ def build_dag_code(spec: Dict[str, Any]) -> str:
         start_date_render = f"datetime({y}, {m}, {d}, tzinfo=local_tz)"
 
     max_active_runs_line = "    max_active_runs=1,\n" if assets_expr else ""
+    dag_callbacks_block = ""
+    if needs_notify and notify_dag_success:
+        dag_callbacks_block += "    on_success_callback=_notify_dag_success,\n"
+    if needs_notify and notify_dag_failure:
+        dag_callbacks_block += "    on_failure_callback=_notify_dag_failure,\n"
+    if needs_notify and sla_any:
+        dag_callbacks_block += "    sla_miss_callback=_sla_miss,\n"
+
 
     # build code
     code = f"""{warnings_block}{header}# === airflow-web-builder import metadata (do not remove) ===
@@ -500,7 +633,7 @@ default_args = {{
     start_date={start_date_render},
     schedule={schedule_render},
     catchup={fmt_bool(catchup)},
-{max_active_runs_line}    default_args=default_args,
+{dag_callbacks_block}{max_active_runs_line}    default_args=default_args,
     tags=[{tags_list}]
 ) as dag:
     {tasks_section}

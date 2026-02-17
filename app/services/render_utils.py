@@ -210,6 +210,27 @@ def base_operator_kwargs(t: Dict[str, Any], params_dict: Dict[str, Any] | None =
     if outlets:
         parts.append("outlets=[" + ", ".join([f"Asset({json.dumps(u)})" for u in outlets]) + "]")
 
+    # Notificaciones / tiempo (se entregan como expresiones Python ya renderizadas)
+    if t.get("on_success_callback"):
+        parts.append(f"on_success_callback={t['on_success_callback']}")
+    if t.get("on_failure_callback"):
+        parts.append(f"on_failure_callback={t['on_failure_callback']}")
+
+    # SLA / timeouts (minutos)
+    try:
+        sla_m = t.get("sla_minutes")
+        if sla_m not in (None, "", 0, "0", False):
+            parts.append(f"sla=timedelta(minutes={int(sla_m)})")
+    except Exception:
+        pass
+
+    try:
+        etm = t.get("execution_timeout_minutes")
+        if etm not in (None, "", 0, "0", False):
+            parts.append(f"execution_timeout=timedelta(minutes={int(etm)})")
+    except Exception:
+        pass
+
     return (", " + ", ".join(parts)) if parts else ""
 
 
