@@ -179,6 +179,28 @@ def base_operator_kwargs(t: Dict[str, Any], params_dict: Dict[str, Any] | None =
     if params_dict:
         parts.append(f"params={pprint.pformat(params_dict, width=100)}")
 
+    # Notificaciones (callbacks) - se inyectan si el DAG definió las funciones
+    if str(t.get("notify_on_success")).lower() in ("true", "1") or t.get("notify_on_success") is True:
+        parts.append("on_success_callback=_notify_task_success")
+    if str(t.get("notify_on_failure")).lower() in ("true", "1") or t.get("notify_on_failure") is True:
+        parts.append("on_failure_callback=_notify_task_failure")
+
+    # Duración
+    try:
+        sla_min = int(t.get("sla_minutes") or 0)
+    except Exception:
+        sla_min = 0
+    if sla_min > 0:
+        parts.append(f"sla=timedelta(minutes={sla_min})")
+
+    try:
+        et_min = int(t.get("execution_timeout_minutes") or 0)
+    except Exception:
+        et_min = 0
+    if et_min > 0:
+        parts.append(f"execution_timeout=timedelta(minutes={et_min})")
+
+
     # Assets lineage (Airflow 3): inlets/outlets (list o string con \n o ,)
     def _asset_list(v: Any) -> List[str]:
         if v is None or v is False:
@@ -209,27 +231,6 @@ def base_operator_kwargs(t: Dict[str, Any], params_dict: Dict[str, Any] | None =
     outlets = _asset_list(t.get("outlets"))
     if outlets:
         parts.append("outlets=[" + ", ".join([f"Asset({json.dumps(u)})" for u in outlets]) + "]")
-
-    # Notificaciones / tiempo (se entregan como expresiones Python ya renderizadas)
-    if t.get("on_success_callback"):
-        parts.append(f"on_success_callback={t['on_success_callback']}")
-    if t.get("on_failure_callback"):
-        parts.append(f"on_failure_callback={t['on_failure_callback']}")
-
-    # SLA / timeouts (minutos)
-    try:
-        sla_m = t.get("sla_minutes")
-        if sla_m not in (None, "", 0, "0", False):
-            parts.append(f"sla=timedelta(minutes={int(sla_m)})")
-    except Exception:
-        pass
-
-    try:
-        etm = t.get("execution_timeout_minutes")
-        if etm not in (None, "", 0, "0", False):
-            parts.append(f"execution_timeout=timedelta(minutes={int(etm)})")
-    except Exception:
-        pass
 
     return (", " + ", ".join(parts)) if parts else ""
 

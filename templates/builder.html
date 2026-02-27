@@ -3,11 +3,11 @@
 {% block page_title %}Creador de DAGs{% endblock %}
 {% block page_subtitle %}Genera DAGs compatibles con Airflow 3.1{% endblock %}
 {% block header_actions %}
-  <button type="button" class="button ghost" id="btn_import">Importar .py/.json</button>
-  <button type="button" class="button ghost" id="btn_clear">Limpiar</button>
+  <button class="button ghost" id="btn_import">Importar .py/.json</button>
+  <button class="button ghost" id="btn_clear">Limpiar</button>
 
-  <button type="button" class="button secondary" id="btn_preview">Previsualizar</button>
-  <button type="button" class="button" id="btn_download">Descargar .py</button>
+  <button class="button secondary" id="btn_preview">Previsualizar</button>
+  <button class="button" id="btn_download">Descargar .py</button>
 {% endblock %}
 
 
@@ -47,7 +47,7 @@
 <div class="card" style="padding:0;">
   <!-- Tabs -->
   <div role="tablist" aria-label="Secciones" class="tabs-header">
-    <button role="tab" class="tab" data-tab="general" type="button" aria-selected="true">General</button>
+    <button role="tab" class="tab" data-tab="general" aria-selected="true">General</button>
     <button role="tab" class="tab" data-tab="schedule">Scheduling</button>
     <button role="tab" class="tab" data-tab="tasks">Tasks</button>
     <button role="tab" class="tab" data-tab="deps">Dependencies</button>
@@ -101,7 +101,62 @@
         </div>
       </div>
 
+
       <div class="section-card" style="margin-top:12px;">
+        <h3 style="margin-top:0;">Alertas y notificaciones (email)</h3>
+        <div class="muted-note">
+          Envía correos cuando el DAG o una tarea termina OK/FAIL (fallo = después de agotar reintentos) y alertas por duración (SLA).
+        </div>
+
+        <div class="form-grid-2" style="margin-top:10px;">
+          <div>
+            <label>Correos destino (separados por coma)</label>
+            <input id="notify_emails" placeholder="equipo@empresa.cl, oncall@empresa.cl"/>
+          </div>
+          <div>
+            <label>Asunto base (opcional)</label>
+            <input id="notify_subject_prefix" placeholder="[Airflow]"/>
+          </div>
+        </div>
+
+        <div class="form-grid-2" style="margin-top:10px;">
+          <div>
+            <label style="display:block;">Eventos del DAG</label>
+            <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+              <label style="display:flex; gap:6px; align-items:center;">
+                <input id="notify_dag_success" type="checkbox"/> Éxito
+              </label>
+              <label style="display:flex; gap:6px; align-items:center;">
+                <input id="notify_dag_failure" type="checkbox" checked/> Falla
+              </label>
+            </div>
+          </div>
+          <div>
+            <label style="display:block;">Eventos por defecto en tareas</label>
+            <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+              <label style="display:flex; gap:6px; align-items:center;">
+                <input id="notify_task_success_default" type="checkbox"/> Éxito
+              </label>
+              <label style="display:flex; gap:6px; align-items:center;">
+                <input id="notify_task_failure_default" type="checkbox" checked/> Falla (post reintentos)
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-grid-2" style="margin-top:10px;">
+          <div>
+            <label>DAG run timeout (min) (opcional)</label>
+            <input id="dagrun_timeout_minutes" type="number" min="1" step="1" placeholder="Ej: 180"/>
+          </div>
+          <div>
+            <label>Execution timeout por defecto en tareas (min) (opcional)</label>
+            <input id="default_execution_timeout_minutes" type="number" min="1" step="1" placeholder="Ej: 60"/>
+          </div>
+        </div>
+      </div>
+
+<div class="section-card" style="margin-top:12px;">
         <h3 style="margin-top:0;">Parámetros y argumentos (global)</h3>
         <div class="muted-note">Centraliza <b>params</b> (templating Jinja) y <b>argsets</b> (argumentos reutilizables). Luego los asignas por tarea en <b>Dependencies</b>.</div>
 
@@ -468,8 +523,8 @@
 <div class="card" style="margin-top:12px;">
   <h3 style="margin-top:0;">Preview / Validación</h3>
   <div style="display:flex;gap:8px;margin-bottom:8px;">
-    <button type="button" class="button secondary" id="btn_show_code">Código</button>
-    <button type="button" class="button secondary" id="btn_show_val">Validación</button>
+    <button class="button secondary" id="btn_show_code">Código</button>
+    <button class="button secondary" id="btn_show_val">Validación</button>
   </div>
   <pre id="out_code">—</pre>
   <pre id="out_val" style="display:none">—</pre>
@@ -2556,7 +2611,8 @@ function collect(){
     const o = {};
     qAll(card, "[data-k]").forEach(inp => {
       const k = inp.getAttribute("data-k");
-      o[k] = (k === "task_id") ? normId(inp.value) : inp.value;
+      if(inp && inp.type === "checkbox"){ o[k] = !!inp.checked; }
+      else { o[k] = (k === "task_id") ? normId(inp.value) : inp.value; }
     });
     return o;
   });
@@ -2629,6 +2685,15 @@ function collect(){
     subapp: document.getElementById("subapp")?.value || "",
     retries: parseInt(document.getElementById("retries")?.value || "1", 10),
     retry_minutes: parseInt(document.getElementById("retry_minutes")?.value || "5", 10),
+    catchup: !!document.getElementById("catchup")?.checked,
+    notify_emails: (document.getElementById("notify_emails")?.value || "").trim(),
+    notify_subject_prefix: (document.getElementById("notify_subject_prefix")?.value || "").trim(),
+    notify_dag_success: !!document.getElementById("notify_dag_success")?.checked,
+    notify_dag_failure: !!document.getElementById("notify_dag_failure")?.checked,
+    notify_task_success_default: !!document.getElementById("notify_task_success_default")?.checked,
+    notify_task_failure_default: !!document.getElementById("notify_task_failure_default")?.checked,
+    dagrun_timeout_minutes: parseInt(document.getElementById("dagrun_timeout_minutes")?.value || "0", 10) || 0,
+    default_execution_timeout_minutes: parseInt(document.getElementById("default_execution_timeout_minutes")?.value || "0", 10) || 0,
     start_date: document.getElementById("start_date")?.value || "",    schedule: (function(){ const c = buildCronFromUI2(); window.builderState.schedule = c; return c; })(),
     timezone: (window.builderState?.timezone) || "UTC",
     params: (window.builderState?.params) || {},
@@ -3126,6 +3191,16 @@ document.getElementById("btn_download")?.addEventListener("click", async ()=>{
     _setVal('retries', spec.retries ?? 1);
     _setVal('retry_minutes', spec.retry_minutes ?? spec.retry_delay_minutes ?? 5);
     _setVal('catchup', !!spec.catchup);
+
+    _setVal('notify_emails', spec.notify_emails || '');
+    _setVal('notify_subject_prefix', spec.notify_subject_prefix || '');
+    _setVal('notify_dag_success', !!spec.notify_dag_success);
+    _setVal('notify_dag_failure', !!spec.notify_dag_failure);
+    _setVal('notify_task_success_default', !!spec.notify_task_success_default);
+    _setVal('notify_task_failure_default', !!spec.notify_task_failure_default);
+    _setVal('dagrun_timeout_minutes', spec.dagrun_timeout_minutes || '');
+    _setVal('default_execution_timeout_minutes', spec.default_execution_timeout_minutes || '');
+
     _setVal('confirm_on', !!spec.confirm);
 
     // globals
